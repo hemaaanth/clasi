@@ -1,4 +1,5 @@
 import { dlopen, ptr } from "bun:ffi";
+import type { Pointer } from "bun:ffi";
 
 const FILE_ATTRIBUTE_DIRECTORY = 0x10;
 const FILE_ATTRIBUTE_REPARSE_POINT = 0x400;
@@ -7,6 +8,7 @@ const FILE_ID_INFO = 18;
 const FILE_SHARE_READ = 0x1;
 const FILE_SHARE_WRITE = 0x2;
 const FILE_SHARE_DELETE = 0x4;
+const GENERIC_READ = 0x8000_0000;
 const OPEN_EXISTING = 3;
 const FILE_FLAG_OPEN_REPARSE_POINT = 0x0020_0000;
 
@@ -19,16 +21,17 @@ const kernel32 = dlopen("kernel32.dll", {
     args: ["ptr", "i32", "ptr", "u32"],
     returns: "bool",
   },
+  GetFileSizeEx: {
+    args: ["ptr", "ptr"],
+    returns: "bool",
+  },
+  ReadFile: {
+    args: ["ptr", "ptr", "u32", "ptr", "ptr"],
+    returns: "bool",
+  },
   CloseHandle: {
     args: ["ptr"],
     returns: "bool",
-  },
-});
-
-const ucrt = dlopen("ucrtbase.dll", {
-  _get_osfhandle: {
-    args: ["i32"],
-    returns: "ptr",
   },
 });
 
@@ -37,18 +40,15 @@ export interface WindowsFileIdentity {
   readonly fileId: string;
 }
 
+export interface WindowsIdentityFile {
+  readonly identity: WindowsFileIdentity;
+  readonly size: number;
+  readUtf8(maximumBytes: number): string;
+  close(): void;
+}
+
 export function readWindowsPathIdentity(path: string): WindowsFileIdentity {
-  const encodedPath = Buffer.from(`${path}\0`, "utf16le");
-  const handle = kernel32.symbols.CreateFileW(
-    ptr(encodedPath),
-    0,
-    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-    null,
-    OPEN_EXISTING,
-    FILE_FLAG_OPEN_REPARSE_POINT,
-    null,
-  );
-  if (!validHandle(handle)) throw new Error("windows-file-open-failed");
+  const handle = openPath(path, 0);
   try {
     return readHandleIdentity(handle);
   } finally {
@@ -56,10 +56,45 @@ export function readWindowsPathIdentity(path: string): WindowsFileIdentity {
   }
 }
 
-export function readWindowsFileDescriptorIdentity(fileDescriptor: number): WindowsFileIdentity {
-  const handle = ucrt.symbols._get_osfhandle(fileDescriptor);
-  if (!validHandle(handle)) throw new Error("windows-file-handle-unavailable");
-  return readHandleIdentity(handle);
+export function openWindowsIdentityFile(path: string): WindowsIdentityFile {
+  const handle = openPath(path, GENERIC_READ);
+  try {
+    const identity = readHandleIdentity(handle);
+    const size = readHandleSize(handle);
+    let closed = false;
+    return {
+      identity,
+      size,
+      readUtf8(maximumBytes: number): string {
+        if (closed) throw new Error("windows-file-handle-closed");
+        if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 1 || size > maximumBytes) {
+          throw new Error("windows-file-too-large");
+        }
+        const bytes = new Uint8Array(maximumBytes + 1);
+        const bytesRead = new Uint8Array(4);
+        if (!kernel32.symbols.ReadFile(
+          handle,
+          ptr(bytes),
+          bytes.byteLength,
+          ptr(bytesRead),
+          null,
+        )) {
+          throw new Error("windows-file-read-failed");
+        }
+        const length = new DataView(bytesRead.buffer).getUint32(0, true);
+        if (length > maximumBytes) throw new Error("windows-file-too-large");
+        return new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, length));
+      },
+      close(): void {
+        if (closed) return;
+        closed = true;
+        kernel32.symbols.CloseHandle(handle);
+      },
+    };
+  } catch (error) {
+    kernel32.symbols.CloseHandle(handle);
+    throw error;
+  }
 }
 
 export function sameWindowsFileIdentity(
@@ -69,7 +104,22 @@ export function sameWindowsFileIdentity(
   return left.volumeSerial === right.volumeSerial && left.fileId === right.fileId;
 }
 
-function readHandleIdentity(handle: number): WindowsFileIdentity {
+function openPath(path: string, desiredAccess: number): Pointer {
+  const encodedPath = Buffer.from(`${path}\0`, "utf16le");
+  const handle = kernel32.symbols.CreateFileW(
+    ptr(encodedPath),
+    desiredAccess,
+    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+    null,
+    OPEN_EXISTING,
+    FILE_FLAG_OPEN_REPARSE_POINT,
+    null,
+  );
+  if (!validHandle(handle)) throw new Error("windows-file-open-failed");
+  return handle;
+}
+
+function readHandleIdentity(handle: Pointer): WindowsFileIdentity {
   const attributes = new Uint8Array(8);
   if (!kernel32.symbols.GetFileInformationByHandleEx(
     handle,
@@ -99,6 +149,18 @@ function readHandleIdentity(handle: number): WindowsFileIdentity {
   return { volumeSerial, fileId };
 }
 
-function validHandle(handle: number | null): handle is number {
+function readHandleSize(handle: Pointer): number {
+  const output = new Uint8Array(8);
+  if (!kernel32.symbols.GetFileSizeEx(handle, ptr(output))) {
+    throw new Error("windows-file-size-unavailable");
+  }
+  const size = new DataView(output.buffer).getBigInt64(0, true);
+  if (size < 0n || size > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error("windows-file-too-large");
+  }
+  return Number(size);
+}
+
+function validHandle(handle: Pointer | null): handle is Pointer {
   return handle !== null && handle !== 0 && handle !== -1 && Number.isSafeInteger(handle);
 }

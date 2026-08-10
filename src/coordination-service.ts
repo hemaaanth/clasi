@@ -349,12 +349,11 @@ export class CoordinationService {
       return rejected("invalid-transaction-state");
     }
 
-    const stateHandle = stateFile.handle;
+    const openedStateSize = stateFile.size;
     let quarantineFile: OpenIdentityFile | undefined;
     let quarantineRemoved = false;
     try {
-      const openedState = await stateHandle.stat();
-      if (!openedState.isFile() || openedState.size > MAX_DOCUMENT_BYTES) {
+      if (openedStateSize > MAX_DOCUMENT_BYTES) {
         return rejected("invalid-transaction-state");
       }
 
@@ -364,11 +363,10 @@ export class CoordinationService {
         if (!hasErrorCode(error, "ENOENT")) return rejected("quarantine-unsafe");
       }
 
-      const quarantineHandle = quarantineFile?.handle;
-      let openedQuarantine: Stats | undefined;
-      if (quarantineHandle !== undefined) {
-        openedQuarantine = await quarantineHandle.stat();
-        if (!openedQuarantine.isFile() || openedQuarantine.size > MAX_DOCUMENT_BYTES) {
+      let openedQuarantineSize: number | undefined;
+      if (quarantineFile !== undefined) {
+        openedQuarantineSize = quarantineFile.size;
+        if (openedQuarantineSize > MAX_DOCUMENT_BYTES) {
           return rejected("quarantine-unsafe");
         }
       }
@@ -398,7 +396,7 @@ export class CoordinationService {
         return rejected("transaction-changed");
       }
 
-      if (quarantineFile !== undefined && openedQuarantine !== undefined) {
+      if (quarantineFile !== undefined && openedQuarantineSize !== undefined) {
         let linkedQuarantine: IdentityPathState;
         try {
           linkedQuarantine = await inspectIdentityPath(
@@ -433,12 +431,12 @@ export class CoordinationService {
       return rejected("quarantine-unsafe");
     } finally {
       try {
-        await quarantineFile?.handle.close();
+        await quarantineFile?.close();
       } catch {
         // Cleanup outcome is based on verified path operations, never close diagnostics.
       }
       try {
-        await stateHandle.close();
+        await stateFile.close();
       } catch {
         // Cleanup outcome is based on verified path operations, never close diagnostics.
       }
@@ -480,12 +478,11 @@ export class CoordinationService {
     } catch {
       return false;
     }
-    const handle = file.handle;
+    const openedSize = file.size;
 
     try {
-      const opened = await handle.stat();
-      if (!opened.isFile() || opened.size > MAX_LOCK_OWNER_BYTES) return false;
-      const content = await handle.readFile({ encoding: "utf8" });
+      if (openedSize > MAX_LOCK_OWNER_BYTES) return false;
+      const content = await file.readUtf8(MAX_LOCK_OWNER_BYTES);
       if (Buffer.byteLength(content, "utf8") > MAX_LOCK_OWNER_BYTES) return false;
       const linked = await inspectIdentityPath(ownerPath, file.identity);
       if (
@@ -501,7 +498,7 @@ export class CoordinationService {
       return false;
     } finally {
       try {
-        await handle.close();
+        await file.close();
       } catch {
         // Lock inspection never reports descriptor details.
       }
@@ -564,8 +561,10 @@ type StableFileIdentity =
   | ({ readonly kind: "windows" } & WindowsFileIdentity);
 
 interface OpenIdentityFile {
-  readonly handle: FileHandle;
   readonly identity: StableFileIdentity;
+  readonly size: number;
+  readUtf8(maximumBytes: number): Promise<string>;
+  close(): Promise<void>;
 }
 
 interface IdentityPathState {
@@ -579,21 +578,23 @@ async function openIdentityFile(path: string): Promise<OpenIdentityFile> {
     if (!beforeStats.isFile()) throw new Error("not-regular");
     const windows = await import("./windows-file-identity.ts");
     const before = windows.readWindowsPathIdentity(path);
-    const handle = await open(path, constants.O_RDONLY);
+    const opened = windows.openWindowsIdentityFile(path);
     try {
-      const opened = await handle.stat();
-      if (!opened.isFile()) throw new Error("not-regular");
-      const fromHandle = windows.readWindowsFileDescriptorIdentity(handle.fd);
       const linked = windows.readWindowsPathIdentity(path);
       if (
-        !windows.sameWindowsFileIdentity(before, fromHandle) ||
-        !windows.sameWindowsFileIdentity(fromHandle, linked)
+        !windows.sameWindowsFileIdentity(before, opened.identity) ||
+        !windows.sameWindowsFileIdentity(opened.identity, linked)
       ) {
         throw new Error("file-changed");
       }
-      return { handle, identity: { kind: "windows", ...fromHandle } };
+      return {
+        identity: { kind: "windows", ...opened.identity },
+        size: opened.size,
+        readUtf8: async maximumBytes => opened.readUtf8(maximumBytes),
+        close: async () => opened.close(),
+      };
     } catch (error) {
-      await handle.close().catch(() => {});
+      opened.close();
       throw error;
     }
   }
@@ -605,7 +606,15 @@ async function openIdentityFile(path: string): Promise<OpenIdentityFile> {
     const opened = await handle.stat();
     const identity = statIdentity(opened);
     if (!opened.isFile() || identity === null) throw new Error("file-identity-unavailable");
-    return { handle, identity };
+    return {
+      identity,
+      size: opened.size,
+      readUtf8: async maximumBytes => {
+        if (opened.size > maximumBytes) throw new Error("file-too-large");
+        return handle.readFile({ encoding: "utf8" });
+      },
+      close: async () => handle.close(),
+    };
   } catch (error) {
     await handle.close().catch(() => {});
     throw error;
