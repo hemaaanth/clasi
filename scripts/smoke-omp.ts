@@ -22,6 +22,7 @@ import {
   resolveExecutable,
   runCheckedProcess,
   spawnProcess,
+  spawnProcessDiscardOutput,
 } from "./isolation.ts";
 import type { IsolatedRoots, ProcessAdapter, ProcessRequest } from "./isolation.ts";
 
@@ -284,15 +285,33 @@ export async function runOmpSmoke(
     const installedBin = await resolveExecutable("clasi", cleanEnvironment);
     assertPathInsideRoot(roots.root, installedBin);
     assertPathInsideRoot(roots.root, await realpath(installedBin));
+    const installedSource = join(
+      roots.bunInstall,
+      "install",
+      "global",
+      "node_modules",
+      "clasi",
+      "bin",
+      "clasi.ts",
+    );
+    assertPathInsideRoot(roots.root, installedSource);
+    await access(installedSource);
     stage = "global-status";
     const globalStatus = await runCheckedClasiStatus(adapter, {
-      command: installedBin,
-      args: ["status"],
+      command: bunExecutable,
+      args: [installedSource, "status"],
       cwd: packageRoot,
       env: cleanEnvironment,
     });
     stage = "global-status-output";
     assertClasiStatus(globalStatus, roots.clasiHome);
+    stage = "global-launcher";
+    await checked(dependencies.process ?? spawnProcessDiscardOutput, {
+      command: installedBin,
+      args: ["status"],
+      cwd: packageRoot,
+      env: cleanEnvironment,
+    });
     stage = "uninstall";
 
     for (const path of [paths.plugins, paths.pluginManifest, paths.pluginLock, paths.linkedPackage]) {

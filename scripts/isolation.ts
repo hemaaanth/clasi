@@ -1,4 +1,5 @@
 import { runProcess as runNodeProcess } from "../src/exec.ts";
+import { spawn } from "node:child_process";
 import { constants } from "node:fs";
 import { access, mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -191,6 +192,33 @@ export const spawnProcess: ProcessAdapter = async request => {
     stdout: Buffer.from(result.stdout).toString("utf8"),
     stderr: Buffer.from(result.stderr).toString("utf8"),
   };
+};
+
+export const spawnProcessDiscardOutput: ProcessAdapter = request => {
+  validateProcessRequest(request);
+  const { promise, resolve, reject } = Promise.withResolvers<ProcessResult>();
+  const child = spawn(request.command, [...request.args], {
+    cwd: request.cwd,
+    env: request.env as NodeJS.ProcessEnv | undefined,
+    shell: false,
+    stdio: "ignore",
+    windowsHide: true,
+  });
+  let settled = false;
+  const timer = setTimeout(() => {
+    child.kill();
+    finish(new IsolationError("process-timeout"));
+  }, request.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  const finish = (error?: IsolationError, exitCode?: number): void => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    if (error) reject(error);
+    else resolve({ exitCode: exitCode ?? 1, stdout: "", stderr: "" });
+  };
+  child.once("error", () => finish(new IsolationError("process-spawn-failed")));
+  child.once("close", code => finish(undefined, code ?? 1));
+  return promise;
 };
 
 export async function runCheckedProcess(

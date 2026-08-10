@@ -11,6 +11,7 @@ import {
   createIsolatedRoots,
   runCheckedProcess,
   spawnProcess,
+  spawnProcessDiscardOutput,
 } from "../scripts/isolation.ts";
 import type { IsolatedRoots, ProcessAdapter } from "../scripts/isolation.ts";
 import {
@@ -116,6 +117,16 @@ describe("public smoke scripts", () => {
       timeoutMs: 5_000,
       maxOutputBytes: 16,
     })).rejects.toEqual(new IsolationError("process-spawn-failed"));
+  });
+
+  test("runs terminal launchers without pipe-backed output", async () => {
+    expect(await spawnProcessDiscardOutput({
+      command: process.execPath,
+      args: ["-e", "process.stdout.write('discarded')"],
+      cwd: resolve("."),
+      timeoutMs: 5_000,
+      maxOutputBytes: 16,
+    })).toEqual({ exitCode: 0, stdout: "", stderr: "" });
   });
 
   test("accepts exact clasi diagnostics without retaining raw text", () => {
