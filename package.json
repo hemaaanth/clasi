@@ -3,6 +3,17 @@
   "version": "0.1.0",
   "description": "Continuous learning and self-improvement for OMP",
   "type": "module",
+  "keywords": [
+    "omp",
+    "oh-my-pi",
+    "pi-coding-agent",
+    "coding-agent",
+    "memory",
+    "developer-tools"
+  ],
+  "engines": {
+    "bun": ">=1.3.14"
+  },
   "license": "MIT",
   "exports": {
     ".": "./src/index.ts"
@@ -15,6 +26,7 @@
     "skills",
     "src",
     "LICENSE",
+    "CHANGELOG.md",
     "README.md"
   ],
   "omp": {
@@ -23,8 +35,14 @@
     ]
   },
   "scripts": {
+    "typecheck": "tsc --noEmit",
     "test": "bun test",
-    "typecheck": "tsc --noEmit"
+    "smoke:host": "bun scripts/smoke-host.ts",
+    "smoke:omp": "bun scripts/smoke-omp.ts",
+    "test:concurrency": "bun test test/concurrency.test.ts",
+    "test:privacy": "bun test test/privacy.test.ts",
+    "model:eval": "bun scripts/model-eval.ts",
+    "release:validate": "bun scripts/release-validate.ts"
   },
   "peerDependencies": {
     "@oh-my-pi/pi-coding-agent": ">=17.2.4 <18"

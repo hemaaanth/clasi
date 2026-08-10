@@ -76,6 +76,7 @@ export interface PapercutRecord {
   lifecycle: "open" | "resolved" | "dismissed";
   repairState: RepairState;
   publicationState: PublicationState;
+  publicationIssueNumber: number | null;
   recurrence: number;
   relatedIds: string[];
   createdAt: string;
@@ -109,6 +110,8 @@ export interface MigrationRecord {
   id: string;
   fromScopeId: string;
   toScopeId: string;
+  sourceRevisionIds: string[];
+  sourceDigests: string[];
   status: "pending" | "complete";
   createdAt: string;
   updatedAt: string;
@@ -119,6 +122,8 @@ export interface TransactionRecord {
   documentKey: string;
   state: "staged" | "displaced" | "promoted" | "conflicted";
   candidateRevisionId: string;
+  expectedRevisionId: string | null;
+  expectedDigest: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -193,6 +198,7 @@ export const BODY_FIELDS_BY_DOCUMENT_TYPE: {
     "lifecycle",
     "repairState",
     "publicationState",
+    "publicationIssueNumber",
     "recurrence",
     "relatedIds",
     "createdAt",
@@ -217,8 +223,24 @@ export const BODY_FIELDS_BY_DOCUMENT_TYPE: {
     "createdAt",
     "updatedAt",
   ],
-  migration: ["fromScopeId", "toScopeId", "status", "createdAt", "updatedAt"],
-  transaction: ["documentKey", "state", "candidateRevisionId", "createdAt", "updatedAt"],
+  migration: [
+    "fromScopeId",
+    "toScopeId",
+    "sourceRevisionIds",
+    "sourceDigests",
+    "status",
+    "createdAt",
+    "updatedAt",
+  ],
+  transaction: [
+    "documentKey",
+    "state",
+    "candidateRevisionId",
+    "expectedRevisionId",
+    "expectedDigest",
+    "createdAt",
+    "updatedAt",
+  ],
   metrics: ["injectedCharacters", "papercutsOpened", "papercutsClosed", "napkinHits", "observedAt"],
 };
 
@@ -317,6 +339,19 @@ function validateNapkinRecord(value: unknown): NapkinRecord {
 function validatePapercutRecord(value: unknown): PapercutRecord {
   const record = typedRecord(value, "papercut", "cut");
   const relatedIds = expectStringArray(record.relatedIds, 16).map(id => expectAnyOpaqueId(id));
+  const publicationState = expectEnum(record.publicationState, [
+    "none",
+    "pending",
+    "failed",
+    "indeterminate",
+    "published",
+  ] as const);
+  const publicationIssueNumber = record.publicationIssueNumber === null
+    ? null
+    : expectInteger(record.publicationIssueNumber, 1, Number.MAX_SAFE_INTEGER);
+  if ((publicationState === "published") !== (publicationIssueNumber !== null)) {
+    fail("invalid-field");
+  }
   return {
     id: record.id,
     fingerprint: expectLogicalKey(record.fingerprint),
@@ -336,13 +371,8 @@ function validatePapercutRecord(value: unknown): PapercutRecord {
       "indeterminate",
       "verified",
     ] as const),
-    publicationState: expectEnum(record.publicationState, [
-      "none",
-      "pending",
-      "failed",
-      "indeterminate",
-      "published",
-    ] as const),
+    publicationState,
+    publicationIssueNumber,
     recurrence: expectInteger(record.recurrence, 1, Number.MAX_SAFE_INTEGER),
     relatedIds,
     createdAt: expectTimestamp(record.createdAt),
@@ -387,6 +417,9 @@ function validateMigrationRecord(value: unknown): MigrationRecord {
     id: record.id,
     fromScopeId: expectScopeId(record.fromScopeId),
     toScopeId: expectScopeId(record.toScopeId),
+    sourceRevisionIds: expectStringArray(record.sourceRevisionIds, 256)
+      .map(id => expectOpaqueId(id, "rev")),
+    sourceDigests: expectStringArray(record.sourceDigests, 256).map(expectDigest),
     status: expectEnum(record.status, ["pending", "complete"] as const),
     createdAt: expectTimestamp(record.createdAt),
     updatedAt: expectTimestamp(record.updatedAt),
@@ -400,6 +433,12 @@ function validateTransactionRecord(value: unknown): TransactionRecord {
     documentKey: expectOpaqueId(record.documentKey, "doc"),
     state: expectEnum(record.state, ["staged", "displaced", "promoted", "conflicted"] as const),
     candidateRevisionId: expectOpaqueId(record.candidateRevisionId, "rev"),
+    expectedRevisionId: record.expectedRevisionId === null
+      ? null
+      : expectOpaqueId(record.expectedRevisionId, "rev"),
+    expectedDigest: record.expectedDigest === null
+      ? null
+      : expectDigest(record.expectedDigest),
     createdAt: expectTimestamp(record.createdAt),
     updatedAt: expectTimestamp(record.updatedAt),
   };
@@ -446,6 +485,11 @@ function expectAnyOpaqueId(value: unknown): string {
 
 function expectOpaqueId(value: unknown, prefix: Parameters<typeof isOpaqueId>[1]): string {
   if (isOpaqueId(value, prefix)) return value;
+  return fail("invalid-field");
+}
+
+function expectDigest(value: unknown): string {
+  if (typeof value === "string" && /^[0-9a-f]{64}$/.test(value)) return value;
   return fail("invalid-field");
 }
 

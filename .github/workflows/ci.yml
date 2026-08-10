@@ -1,0 +1,126 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  platform:
+    name: ${{ matrix.os }} / OMP 17.2.4 and latest 17.x
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+    env:
+      CLASI_EVIDENCE_DIR: ${{ runner.temp }}/clasi-evidence
+      CLASI_PUBLIC_GIT_SPEC: github:${{ github.repository }}#${{ github.sha }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Install frozen dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck with OMP 17.2.4
+        run: bun run typecheck
+
+      - name: Test with OMP 17.2.4
+        run: bun run test
+
+      - name: Smoke fake host with OMP 17.2.4
+        run: bun run smoke:host
+
+      - name: Smoke OMP 17.2.4
+        run: bun run smoke:omp
+        env:
+          CLASI_OMP_MATRIX_ROW: minimum
+
+      - name: Install latest OMP 17.x
+        run: bun add --no-save "@oh-my-pi/pi-coding-agent@17"
+
+      - name: Typecheck with latest OMP 17.x
+        run: bun run typecheck
+
+      - name: Test with latest OMP 17.x
+        run: bun run test
+
+      - name: Smoke fake host with latest OMP 17.x
+        run: bun run smoke:host
+
+      - name: Smoke latest OMP 17.x
+        run: bun run smoke:omp
+        env:
+          CLASI_OMP_MATRIX_ROW: latest_17
+
+      - name: Upload actual platform evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: clasi-evidence-${{ matrix.os }}
+          path: ${{ runner.temp }}/clasi-evidence/*.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+  aggregate-evidence:
+    name: Validate actual CI evidence
+    needs: platform
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CLASI_EVIDENCE_DIR: ${{ runner.temp }}/clasi-evidence
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Install frozen dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Download actual platform evidence
+        uses: actions/download-artifact@v4
+        with:
+          pattern: clasi-evidence-*
+          path: ${{ runner.temp }}/clasi-evidence
+          merge-multiple: true
+
+      - name: Validate macOS and Windows evidence together
+        run: >-
+          bun -e 'import { readPlatformEvidence } from "./scripts/evidence-schema.ts";
+          const directory = process.env.CLASI_EVIDENCE_DIR;
+          if (!directory) throw new Error("evidence-directory-unavailable");
+          await Promise.all(["macos", "windows"].map(platform =>
+          readPlatformEvidence(directory, platform)));
+          console.log("validated actual macOS and Windows evidence");'
+
+      - name: Confirm incomplete CI evidence cannot pass the release gate
+        shell: bash
+        run: |
+          if bun run release:validate; then
+            echo "release validation unexpectedly passed without actual WSL and model evidence"
+            exit 1
+          fi
+          echo "release validation correctly rejected incomplete CI evidence"

@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { CustomMessage } from "@oh-my-pi/pi-coding-agent";
 import registerClasi, {
-  CLASI_CONTEXT_MAX_CHARACTERS,
   CLASI_CONTEXT_MESSAGE_TYPE,
   createClasiRuntime,
 } from "../src/index.ts";
@@ -9,6 +8,7 @@ import { runClasiCli } from "../src/cli.ts";
 import { runJsonCommand } from "../src/exec.ts";
 import type { JsonCommandResult } from "../src/exec.ts";
 import { CLASI_VERSION } from "../src/runtime-types.ts";
+import { CLASI_TOOL_NAMES } from "../src/tools.ts";
 import { FakeProcessAdapter, exited } from "./support/fake-exec.ts";
 import { FakeExtensionHost } from "./support/fake-extension-host.ts";
 
@@ -43,9 +43,17 @@ describe("extension registration", () => {
     registerClasi(host.api);
 
     expect([...host.commands.keys()]).toEqual(["clasi"]);
-    expect([...host.events.keys()]).toEqual(["context"]);
+    expect([...host.events.keys()]).toEqual([
+      "context",
+      "session_start",
+      "turn_start",
+      "session_switch",
+      "session_branch",
+      "session_tree",
+      "session_compact",
+    ]);
     expect([...host.messageRenderers]).toEqual([CLASI_CONTEXT_MESSAGE_TYPE]);
-    expect([...host.tools]).toEqual([]);
+    expect([...host.tools]).toEqual([...CLASI_TOOL_NAMES]);
     expect(host.commands.has("memory")).toBeFalse();
   });
 
@@ -56,10 +64,10 @@ describe("extension registration", () => {
     expect(() => registerClasi(host.api)).toThrow("Duplicate");
   });
 
-  test("replaces an older clasi message with one bounded current message", async () => {
+  test("replaces an older clasi message with one current message", async () => {
     const host = new FakeExtensionHost();
     const runtime = createClasiRuntime({
-      readContext: () => "x".repeat(CLASI_CONTEXT_MAX_CHARACTERS + 100),
+      readContext: () => "current",
     });
     registerClasi(host.api, runtime);
 
@@ -77,7 +85,7 @@ describe("extension registration", () => {
     const clasiMessages = messages.filter(isClasiMessage);
 
     expect(clasiMessages).toHaveLength(1);
-    expect(clasiMessages[0]?.content).toHaveLength(CLASI_CONTEXT_MAX_CHARACTERS);
+    expect(clasiMessages[0]?.content).toBe("current");
     expect(clasiMessages[0]?.display).toBeFalse();
     expect(messages[1]).toEqual({ role: "user", content: "keep", timestamp: 0 });
   });

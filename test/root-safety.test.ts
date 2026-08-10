@@ -18,6 +18,7 @@ import {
   assertSafeContainedPath,
   createPrivateRoot,
   inspectImportFile,
+  readImportFileBounded,
   pinRoot,
 } from "../src/root-safety.ts";
 import type { RootSafetyReasonCode } from "../src/root-safety.ts";
@@ -159,8 +160,11 @@ describe("root safety", () => {
       await symlink(regular, linked, "file");
 
       await expect(inspectImportFile(regular)).resolves.toEqual({ size: 4 });
+      expect(new TextDecoder().decode(await readImportFileBounded(regular))).toBe("safe");
       await expectSafetyFailure(inspectImportFile(oversized), "file-too-large");
       await expectSafetyFailure(inspectImportFile(linked), "symlink-component");
+      await expectSafetyFailure(readImportFileBounded(oversized), "file-too-large");
+      await expectSafetyFailure(readImportFileBounded(linked), "symlink-component");
 
       if (process.platform !== "win32") {
         const fifo = join(temporary, "pipe");

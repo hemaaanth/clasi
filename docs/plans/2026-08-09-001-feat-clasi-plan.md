@@ -492,15 +492,18 @@ U3 and U4 may proceed independently after U2. All later units depend on their sh
 
 ### U3. Implement lossless revisioned Markdown storage
 
+- **Status (2026-08-09):** Complete. `bun run typecheck` and the full `bun test` suite pass (77 tests); the focused U3 suite passes 21 tests.
+
 - **Goal:** Prevent partial active views and silent version loss under concurrent agents, crashes, manual edits, and eventually consistent sync.
 - **Requirements:** R17, R19, R33-R34, R40-R43
 - **Dependencies:** U2
-- **Files:** `src/lock.ts`, `src/markdown-store.ts`, `src/revisions.ts`, `src/conflicts.ts`, `src/recovery.ts`, `test/markdown-store.test.ts`, `test/concurrency.test.ts`, `test/recovery.test.ts`
-- **Approach:** Implement the move-before-promote transaction: local owner-token lock, unique revision and staging writes, exclusive transaction directory, expected-absence first-create branch, canonical-to-quarantine rename for updates, exact displaced validation, no-replace hard-link promotion, immediate staging unlink, retained opaque inodes, last-good activation, and separate validated-revision versus opaque-quarantine conflict records. Revalidation may copy a stable privacy-safe quarantined snapshot into a revision; rejected or changing bytes remain opaque. Reconcile missing canonical paths and interrupted transaction steps idempotently without automatically deleting quarantine artifacts. Unsupported hard links, malformed state, newer schemas, or uncertain ownership force read-only mode.
+- **Files:** `src/lock.ts`, `src/markdown-store.ts`, `src/revisions.ts`, `src/conflicts.ts`, `test/markdown-store.test.ts`, `test/concurrency.test.ts`, `test/recovery.test.ts`
+- **Approach:** Implement the move-before-promote transaction: local owner-token lock, unique revision and staging writes, exclusive transaction directory, expected-absence first-create branch, canonical-to-quarantine rename for updates, exact displaced validation, no-replace hard-link promotion, immediate staging unlink, retained opaque inodes, last-good activation, and separate validated-revision versus opaque-quarantine conflict records. Revalidation may copy a stable privacy-safe source artifact into a newly minted alternate revision: the occupied canonical for `canonical-occupied`, or quarantine for an unsafe displacement. The alternate is attached to the candidate's parent so arbitrary external lineage cannot corrupt the revision graph. Rejected or changing bytes remain opaque. Reconcile missing canonical paths and interrupted transaction steps idempotently without automatically deleting quarantine artifacts. Unsupported hard links, malformed state, newer schemas, or uncertain ownership degrade safely.
 - **Test Scenarios:** Race two clasi writers; first-create with no canonical; hold, kill, and reuse lock owners; vary clock and PID evidence; mutate before and after canonical displacement; create a replacement before no-replace promotion; keep an external file descriptor writing after displaced validation and cleanup eligibility; inject two revision heads; interrupt every transaction step; restart from missing or partial canonical state; and repeat both conflict kinds. Validated conflicts expose two revisions; opaque conflicts expose no bytes or preview, refuse activation while canonical is occupied, preserve quarantine while activating a safe candidate into an absent path, and convert only after stable privacy-safe revalidation. Both safe branches survive, no unseen path is overwritten, no point-in-time hash deletes a still-writable displaced inode, and no fallback truncates or steals a lock.
 - **Verification:** `bun test test/markdown-store.test.ts test/concurrency.test.ts test/recovery.test.ts`.
 
 ### U4. Resolve machine and repository identity and complete atomic setup
+- **Status (2026-08-09):** Complete. Integrated `bun run typecheck` passes; the focused identity/onboarding/migration suites pass 40 tests, including bounded-handle imports and restart-safe snapshot migrations.
 
 - **Goal:** Make every worktree and clone attach to the intended scope without retaining checkout paths or silently migrating memory.
 - **Requirements:** R4-R7, R10-R15, R20
@@ -511,6 +514,7 @@ U3 and U4 may proceed independently after U2. All later units depend on their sh
 - **Verification:** `bun test test/machine.test.ts test/git-identity.test.ts test/onboarding.test.ts`.
 
 ### U5. Build Context, Napkin, Papercut, proposal, and impact services
+- **Status (2026-08-09):** Complete. Integrated `bun run typecheck` passes; focused Context, Napkin, Papercut, impact, and active-view suites pass 33 tests after cross-service concurrency and reporting review.
 
 - **Goal:** Implement the three user-facing concepts and their scope, ranking, review, recurrence, and reporting invariants independently of Pi UI.
 - **Requirements:** R1, R8-R9, R14-R19, R21-R30, R31, R46-R48
@@ -521,6 +525,7 @@ U3 and U4 may proceed independently after U2. All later units depend on their sh
 - **Verification:** `bun test test/context-service.test.ts test/napkin-service.test.ts test/papercut-service.test.ts test/impact-service.test.ts`.
 
 ### U6. Integrate bounded context, lifecycle refresh, and model tools
+- **Status (2026-08-09):** Complete. Integrated `bun run typecheck` passes; focused runtime-environment, runtime, context-injection, tool-registry, lifecycle, and extension-registration suites pass 35 tests.
 
 - **Goal:** Connect domain behavior to Pi so every session receives one current bounded view and agents can learn without accessing raw retained evidence.
 - **Requirements:** R15, R20-R25, R31-R32, R34, R38-R39, R46
@@ -531,6 +536,8 @@ U3 and U4 may proceed independently after U2. All later units depend on their sh
 - **Verification:** `bun test test/context-injection.test.ts test/tools.test.ts test/lifecycle.test.ts`.
 
 ### U7. Implement onboarding, review, recovery, and command UX
+- **Status (2026-08-09):** Complete. Integrated typecheck passes; provider-free CLI/headless diagnostics, interactive review/config/conflict/recovery, coordination cleanup, migration, and command suites pass, and a clean isolated CLI smoke completes setup, status, config, context, and doctor flows without a provider.
+
 
 - **Goal:** Give users one quiet interactive `/clasi` surface and one provider-free `clasi` executable for local setup, configuration, inspection, approval, history, conflicts, migration, recovery, and impact.
 - **Requirements:** R7, R10-R11, R14, R26, R33-R34, R38, R42, R46-R48
@@ -541,6 +548,8 @@ U3 and U4 may proceed independently after U2. All later units depend on their sh
 - **Verification:** `bun test test/commands.test.ts test/headless.test.ts` and `bun run smoke:host`.
 
 ### U8. Add resumable repair dispatch and explicit GitHub publication
+- **Status (2026-08-09):** Complete. Integrated typecheck passes; focused Papercut, repair, publication, interactive-action, and command suites pass with prepare/confirm/revalidate publication ordering, Paseo/Pi dispatch, explicit observation, and conditional durable Napkin curation.
+
 
 - **Goal:** Turn selected Papercuts into bounded repair work or GitHub issues without remote canonical state, duplicate automatic retries, or premature closure.
 - **Requirements:** R26-R30, R35-R39
@@ -551,6 +560,7 @@ U3 and U4 may proceed independently after U2. All later units depend on their sh
 - **Verification:** `bun test test/repair.test.ts test/github.test.ts`.
 
 ### U9. Prove package installation, platform behavior, and public readiness
+- **Status (2026-08-09):** Implementation and local gates complete. Isolated host/OMP/link/loopback/global-Git smoke passes on WSL, and the actual release model scored 10/10. The fail-closed public release gate remains blocked: this checkout has no public Git remote/spec, so the real OMP Git-install gate cannot emit WSL evidence, and actual macOS plus native Windows evidence has not run.
 
 - **Goal:** Demonstrate that clasi installs and behaves as specified on OMP without hidden local assumptions.
 - **Requirements:** R4, R20, R31-R48 and AE1-AE14

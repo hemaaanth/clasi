@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { ClasiDocument, DocumentType } from "../src/schema.ts";
+import type { AnyClasiDocument, ClasiDocument, DocumentType } from "../src/schema.ts";
 import {
   MarkdownCodecError,
   decodeMarkdown,
@@ -9,7 +9,7 @@ import {
 const NOW = "2026-08-09T12:00:00.000Z";
 const REVISION_ID = opaque("rev", 1);
 
-const DOCUMENTS: readonly ClasiDocument[] = [
+const DOCUMENTS: readonly AnyClasiDocument[] = [
   document("context", "global", "global", [
     {
       id: opaque("ctx", 1),
@@ -50,6 +50,7 @@ const DOCUMENTS: readonly ClasiDocument[] = [
       lifecycle: "open",
       repairState: "none",
       publicationState: "none",
+      publicationIssueNumber: null,
       recurrence: 1,
       relatedIds: [],
       createdAt: NOW,
@@ -86,6 +87,8 @@ const DOCUMENTS: readonly ClasiDocument[] = [
       id: opaque("migration", 1),
       fromScopeId: opaque("repo", 1),
       toScopeId: opaque("repo", 2),
+      sourceRevisionIds: [opaque("rev", 1)],
+      sourceDigests: ["0".repeat(64)],
       status: "pending",
       createdAt: NOW,
       updatedAt: NOW,
@@ -97,6 +100,8 @@ const DOCUMENTS: readonly ClasiDocument[] = [
       documentKey: opaque("doc", 1),
       state: "staged",
       candidateRevisionId: opaque("rev", 2),
+      expectedRevisionId: opaque("rev", 1),
+      expectedDigest: "a".repeat(64),
       createdAt: NOW,
       updatedAt: NOW,
     },
@@ -114,7 +119,7 @@ const DOCUMENTS: readonly ClasiDocument[] = [
 ];
 
 describe("strict Markdown codec", () => {
-  test.each([...DOCUMENTS])("round-trips $documentType with canonical LF", (source: ClasiDocument) => {
+  test.each([...DOCUMENTS])("round-trips $documentType with canonical LF", (source: AnyClasiDocument) => {
     const encoded = encodeMarkdown(source);
 
     expect(encoded.startsWith("\uFEFF")).toBeFalse();
@@ -122,10 +127,33 @@ describe("strict Markdown codec", () => {
     expect(decodeMarkdown(new TextEncoder().encode(encoded))).toEqual(source);
   });
 
-  test.each([...DOCUMENTS])("accepts BOM and CRLF for $documentType", (source: ClasiDocument) => {
+  test.each([...DOCUMENTS])("accepts BOM and CRLF for $documentType", (source: AnyClasiDocument) => {
     const windowsBytes = new TextEncoder().encode(`\uFEFF${encodeMarkdown(source).replaceAll("\n", "\r\n")}`);
 
     expect(decodeMarkdown(windowsBytes)).toEqual(source);
+  });
+
+  test("round-trips a published issue number and rejects invalid publication references", () => {
+    const base = DOCUMENTS[2] as ClasiDocument<"papercut">;
+    const published: ClasiDocument<"papercut"> = {
+      ...base,
+      records: [{
+        ...base.records[0]!,
+        publicationState: "published",
+        publicationIssueNumber: 42,
+      }],
+    };
+    const encoded = encodeMarkdown(published);
+
+    expect(decodeMarkdown(new TextEncoder().encode(encoded))).toEqual(published);
+    expectCodecFailure(encoded.replace("publication_issue_number: 42", "publication_issue_number: 0"), "invalid-field");
+    expectCodecFailure(encoded.replace("publication_issue_number: 42", "publication_issue_number: 1.5"), "invalid-field");
+    expectCodecFailure(encoded.replace("publication_issue_number: 42", "publication_issue_number: null"), "invalid-field");
+    expectCodecFailure(
+      encoded
+        .replace('publication_state: \"published\"', 'publication_state: \"failed\"'),
+      "invalid-field",
+    );
   });
 
   test("rejects unknown, duplicate, multiline, unsupported, and malformed frontmatter", () => {

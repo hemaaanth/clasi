@@ -1,6 +1,7 @@
 import {
   lstat,
   mkdir,
+  open,
   realpath,
 } from "node:fs/promises";
 import { isAbsolute, parse, relative, resolve, sep } from "node:path";
@@ -17,6 +18,7 @@ export type RootSafetyReasonCode =
   | "special-file"
   | "wrong-kind"
   | "file-too-large"
+  | "file-changed"
   | "owner-mismatch"
   | "permissions-changed"
   | "permission-denied"
@@ -149,13 +151,79 @@ export async function inspectImportFile(path: string): Promise<{ size: number }>
   if (!isAbsolute(path)) throw new RootSafetyError("path-escape");
   await assertNoSymlinkComponents(path);
   const stats = await safeLstat(path);
+  validateRegularFileStats(stats, MAX_IMPORT_BYTES);
+  return { size: stats.size };
+}
+
+export async function readImportFileBounded(path: string): Promise<Uint8Array> {
+  return readRegularFileBounded(path, MAX_IMPORT_BYTES);
+}
+
+export async function readRegularFileBounded(
+  path: string,
+  maximumBytes: number,
+): Promise<Uint8Array> {
+  if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 1) {
+    throw new RootSafetyError("file-too-large");
+  }
+  if (!isAbsolute(path)) throw new RootSafetyError("path-escape");
+  await assertNoSymlinkComponents(path);
+  const before = await safeLstat(path);
+  validateRegularFileStats(before, maximumBytes);
+  const handle = await open(path, "r");
+  try {
+    const opened = await handle.stat();
+    validateRegularFileStats(opened, maximumBytes);
+    if (opened.dev !== before.dev || opened.ino !== before.ino) {
+      throw new RootSafetyError("file-changed");
+    }
+    const bytes = Buffer.allocUnsafe(maximumBytes + 1);
+    let offset = 0;
+    while (offset < bytes.byteLength) {
+      const { bytesRead } = await handle.read(
+        bytes,
+        offset,
+        bytes.byteLength - offset,
+        offset,
+      );
+      if (bytesRead === 0) break;
+      offset += bytesRead;
+    }
+    if (offset > maximumBytes) throw new RootSafetyError("file-too-large");
+    const after = await handle.stat();
+    if (
+      after.dev !== opened.dev ||
+      after.ino !== opened.ino ||
+      after.size !== opened.size ||
+      after.mtimeMs !== opened.mtimeMs
+    ) {
+      throw new RootSafetyError("file-changed");
+    }
+    return bytes.subarray(0, offset);
+  } finally {
+    await handle.close();
+  }
+}
+
+function validateRegularFileStats(
+  stats: {
+    isSymbolicLink(): boolean;
+    isFile(): boolean;
+    size: number;
+    uid: number;
+  },
+  maximumBytes: number,
+): void {
   if (stats.isSymbolicLink()) throw new RootSafetyError("symlink-component");
   if (!stats.isFile()) throw new RootSafetyError("special-file");
-  if (stats.size > MAX_IMPORT_BYTES) throw new RootSafetyError("file-too-large");
-  if (process.platform !== "win32" && typeof process.getuid === "function" && stats.uid !== process.getuid()) {
+  if (stats.size > maximumBytes) throw new RootSafetyError("file-too-large");
+  if (
+    process.platform !== "win32" &&
+    typeof process.getuid === "function" &&
+    stats.uid !== process.getuid()
+  ) {
     throw new RootSafetyError("owner-mismatch");
   }
-  return { size: stats.size };
 }
 
 async function assertNoSymlinkComponents(path: string): Promise<void> {
@@ -212,6 +280,6 @@ function isPermissionError(error: unknown): boolean {
   return hasErrorCode(error, "EACCES") || hasErrorCode(error, "EPERM");
 }
 
-function hasErrorCode(error: unknown, code: string): boolean {
+export function hasErrorCode(error: unknown, code: string): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === code;
 }

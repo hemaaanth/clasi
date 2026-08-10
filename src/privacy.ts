@@ -185,10 +185,8 @@ export function validateDocumentPrivacy(document: AnyClasiDocument): PrivacyVali
   return { ok: true };
 }
 
-function validateText(value: string, maximumCharacters: number): PrivacyValidation {
-  if (!value || value.length > maximumCharacters) {
-    return { ok: false, code: value.length > maximumCharacters ? "oversized-field" : "invalid-field" };
-  }
+export function scanExcludedData(value: string): PrivacyValidation {
+  if (!value) return { ok: false, code: "invalid-field" };
   if (/\p{C}/u.test(value.replaceAll("\n", ""))) return { ok: false, code: "invalid-field" };
   if (value.includes("```")) return { ok: false, code: "code-fenced" };
   if (ENVIRONMENT_PATTERN.test(value)) return { ok: false, code: "raw-environment" };
@@ -205,4 +203,11 @@ function validateText(value: string, maximumCharacters: number): PrivacyValidati
     return { ok: false, code: "path-bearing" };
   }
   return { ok: true };
+}
+
+function validateText(value: string, maximumCharacters: number): PrivacyValidation {
+  if (!value || value.length > maximumCharacters) {
+    return { ok: false, code: value.length > maximumCharacters ? "oversized-field" : "invalid-field" };
+  }
+  return scanExcludedData(value);
 }

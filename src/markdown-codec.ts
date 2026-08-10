@@ -6,7 +6,7 @@ import {
   SchemaValidationError,
   validateDocument,
 } from "./schema.ts";
-import type { ClasiDocument, DocumentType } from "./schema.ts";
+import type { AnyClasiDocument, ClasiDocument, DocumentType } from "./schema.ts";
 import { validateDocumentPrivacy } from "./privacy.ts";
 
 const FRONTMATTER_FIELDS = [
@@ -58,7 +58,7 @@ export function encodeMarkdown(input: ClasiDocument): string {
   return encoded;
 }
 
-export function decodeMarkdown(bytes: Uint8Array): ClasiDocument {
+export function decodeMarkdown(bytes: Uint8Array): AnyClasiDocument {
   if (bytes.byteLength > MAX_DOCUMENT_BYTES) throw new MarkdownCodecError("document-too-large");
 
   let source: string;
