@@ -244,7 +244,7 @@ describe("native Windows ownership probe", () => {
       sid: WINDOWS_SID,
       securityDescriptor: WINDOWS_SECURITY_DESCRIPTOR,
     });
-    expect(adapter.calls[0]?.command).toBe("powershell.exe");
+    expect(adapter.calls[0]?.command).toBe("pwsh.exe");
     expect(adapter.calls[0]?.args).toEqual([
       "-NoProfile",
       "-NonInteractive",
@@ -257,6 +257,7 @@ describe("native Windows ownership probe", () => {
       CLASI_ROOT_CHECK: hostileRoot,
     });
     expect(WINDOWS_OWNERSHIP_SCRIPT).toContain("[System.IO.Directory]::GetAccessControl(");
+    expect(WINDOWS_OWNERSHIP_SCRIPT).toContain("[System.IO.FileSystemAclExtensions]::GetAccessControl(");
     expect(WINDOWS_OWNERSHIP_SCRIPT).not.toContain("Get-Acl");
   });
 
@@ -273,6 +274,7 @@ describe("native Windows ownership probe", () => {
       securityDescriptor: WINDOWS_SECURITY_DESCRIPTOR,
     });
     expect(adapter.calls[0]?.args.join(" ")).toContain("Directory]::CreateDirectory");
+    expect(adapter.calls[0]?.args.join(" ")).toContain("FileSystemAclExtensions]::CreateDirectory");
     expect(adapter.calls[0]?.args.join(" ")).not.toContain("SetAccessControl");
     expect(adapter.calls[0]?.args.join(" ")).toContain("SetAccessRuleProtection($true, $false)");
     expect(adapter.calls[0]?.args.join(" ")).toContain("$access.IsInherited");
@@ -281,6 +283,7 @@ describe("native Windows ownership probe", () => {
 
   test("fails closed for missing, malformed, oversized, and mismatched probes", async () => {
     const adapter = new FakeProcessAdapter(
+      { status: "spawn-failed", message: "ENOENT" },
       { status: "spawn-failed", message: "ENOENT" },
       exited("not-json"),
       exited(`"${"x".repeat(70_000)}"`),
@@ -291,6 +294,10 @@ describe("native Windows ownership probe", () => {
       await probeWindowsRootOwnership("C:\\safe", { adapter: adapter.run }),
       "powershell-unavailable",
     );
+    expect(adapter.calls.slice(0, 2).map(call => call.command)).toEqual([
+      "pwsh.exe",
+      "powershell.exe",
+    ]);
     expectOwnershipFailure(
       await probeWindowsRootOwnership("C:\\safe", { adapter: adapter.run }),
       "ownership-probe-invalid",

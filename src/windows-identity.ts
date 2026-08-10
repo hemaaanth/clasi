@@ -1,10 +1,12 @@
 import type { JsonCommandOptions, ProcessAdapter } from "./exec.ts";
 import { runJsonCommand } from "./exec.ts";
 
+const WINDOWS_POWERSHELL_COMMANDS = ["pwsh.exe", "powershell.exe"] as const;
+
 export const WINDOWS_OWNERSHIP_SCRIPT = [
   "$ErrorActionPreference = 'Stop'",
   "$current = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value",
-  "$acl = [System.IO.Directory]::GetAccessControl($env:CLASI_ROOT_CHECK)",
+  "if ($PSVersionTable.PSEdition -eq 'Core') { $directory = New-Object System.IO.DirectoryInfo($env:CLASI_ROOT_CHECK); $acl = [System.IO.FileSystemAclExtensions]::GetAccessControl($directory) } else { $acl = [System.IO.Directory]::GetAccessControl($env:CLASI_ROOT_CHECK) }",
   "$owner = $acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value",
   "$descriptor = $acl.GetSecurityDescriptorSddlForm([System.Security.AccessControl.AccessControlSections]::Owner -bor [System.Security.AccessControl.AccessControlSections]::Access)",
   "@{ current_sid = $current; owner_sid = $owner; security_descriptor = $descriptor } | ConvertTo-Json -Compress",
@@ -19,8 +21,7 @@ const WINDOWS_CREATE_PRIVATE_ROOT_SCRIPT = [
   "$inheritance = [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [System.Security.AccessControl.InheritanceFlags]::ObjectInherit",
   "$rule = New-Object System.Security.AccessControl.FileSystemAccessRule($current, [System.Security.AccessControl.FileSystemRights]::FullControl, $inheritance, [System.Security.AccessControl.PropagationFlags]::None, [System.Security.AccessControl.AccessControlType]::Allow)",
   "$security.AddAccessRule($rule)",
-  "$created = [System.IO.Directory]::CreateDirectory($env:CLASI_ROOT_CHECK, $security)",
-  "$actual = $created.GetAccessControl()",
+  "if ($PSVersionTable.PSEdition -eq 'Core') { $created = [System.IO.FileSystemAclExtensions]::CreateDirectory($security, $env:CLASI_ROOT_CHECK); $actual = [System.IO.FileSystemAclExtensions]::GetAccessControl($created) } else { $created = [System.IO.Directory]::CreateDirectory($env:CLASI_ROOT_CHECK, $security); $actual = $created.GetAccessControl() }",
   "$hasInheritedRule = $false",
   "foreach ($access in $actual.Access) { if ($access.IsInherited) { $hasInheritedRule = $true } }",
   "if ($hasInheritedRule) { throw 'Inherited access rule detected' }",
@@ -68,28 +69,29 @@ async function runOwnershipScript(
     maxOutputBytes: 4_096,
     timeoutMs: 30_000,
   };
-  const result = await runJsonCommand(
-    "powershell.exe",
-    ["-NoProfile", "-NonInteractive", "-Command", script],
-    commandOptions,
-  );
-  if (!result.ok) {
+  for (const command of WINDOWS_POWERSHELL_COMMANDS) {
+    const result = await runJsonCommand(
+      command,
+      ["-NoProfile", "-NonInteractive", "-Command", script],
+      commandOptions,
+    );
+    if (!result.ok) {
+      if (result.code === "spawn-failed") continue;
+      return { writable: false, code: "ownership-probe-invalid" };
+    }
+    if (!isOwnershipPayload(result.value)) {
+      return { writable: false, code: "ownership-probe-invalid" };
+    }
+    if (result.value.current_sid !== result.value.owner_sid) {
+      return { writable: false, code: "owner-mismatch" };
+    }
     return {
-      writable: false,
-      code: result.code === "spawn-failed" ? "powershell-unavailable" : "ownership-probe-invalid",
+      writable: true,
+      sid: result.value.current_sid,
+      securityDescriptor: result.value.security_descriptor,
     };
   }
-  if (!isOwnershipPayload(result.value)) {
-    return { writable: false, code: "ownership-probe-invalid" };
-  }
-  if (result.value.current_sid !== result.value.owner_sid) {
-    return { writable: false, code: "owner-mismatch" };
-  }
-  return {
-    writable: true,
-    sid: result.value.current_sid,
-    securityDescriptor: result.value.security_descriptor,
-  };
+  return { writable: false, code: "powershell-unavailable" };
 }
 
 function isOwnershipPayload(
