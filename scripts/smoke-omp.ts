@@ -286,7 +286,7 @@ export async function runOmpSmoke(
     if (process.platform === "win32") {
       stage = "windows-ownership";
       const ownership = await probeWindowsRootOwnership(roots.clasiHome, {
-        env: cleanEnvironment,
+        env: environment,
       });
       if (!ownership.writable) throw new IsolationError(`ownership-${ownership.code}`);
     }
