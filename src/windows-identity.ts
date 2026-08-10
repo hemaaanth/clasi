@@ -1,5 +1,6 @@
 import type { JsonCommandOptions, JsonCommandResult, ProcessAdapter } from "./exec.ts";
 import { runJsonCommand } from "./exec.ts";
+import { spawnSync } from "node:child_process";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -156,11 +157,11 @@ async function runDefaultOwnershipCommand(
     `try { $result = & { ${script} }; $text = [string]$result; $key = [Convert]::FromBase64String($env:CLASI_OWNERSHIP_KEY); $hmac = New-Object System.Security.Cryptography.HMACSHA256; try { $hmac.Key = $key; $signature = [Convert]::ToBase64String($hmac.ComputeHash($encoding.GetBytes($text))) } finally { $hmac.Dispose() }; [System.IO.File]::WriteAllText($env:CLASI_OWNERSHIP_RESULT, $text, $encoding); [System.IO.File]::WriteAllText($env:CLASI_OWNERSHIP_COMPLETE, "ok:$signature", $encoding) }`,
     "catch { $name = $_.Exception.GetType().Name; if ($name -eq 'UnauthorizedAccessException') { $kind = 'access' } elseif ($name -eq 'MethodException' -or $name -eq 'MethodInvocationException') { $kind = 'method' } elseif ($name -eq 'PlatformNotSupportedException') { $kind = 'platform' } elseif ($name -eq 'RuntimeException') { $kind = 'runtime' } else { $kind = 'other' }; [System.IO.File]::WriteAllText($env:CLASI_OWNERSHIP_COMPLETE, \"error:$kind\", $encoding) }",
   ].join("\n");
-  let child: Bun.Subprocess | undefined;
   try {
     const encodedScript = Buffer.from(wrappedScript, "utf16le").toString("base64");
-    child = Bun.spawn(
-      [command, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodedScript],
+    const invocation = spawnSync(
+      command,
+      ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodedScript],
       {
         env: {
           ...env,
@@ -168,59 +169,51 @@ async function runDefaultOwnershipCommand(
           CLASI_OWNERSHIP_COMPLETE: completionPath,
           CLASI_OWNERSHIP_KEY: authenticationKey.toString("base64"),
         },
-        stdin: "ignore",
-        stdout: "ignore",
-        stderr: "ignore",
+        stdio: "ignore",
+        timeout: 30_000,
+        windowsHide: true,
       },
     );
-    child.unref();
-    let exitedAt: number | undefined;
-    const deadline = Date.now() + 30_000;
-    while (Date.now() < deadline) {
-      const completion = await readFile(completionPath, "utf8").catch(() => undefined);
-      if (completion?.startsWith("error:")) {
-        return {
-          ok: false,
-          code: "nonzero-exit",
-          message: completion.slice("error:".length),
-        };
-      }
-      if (completion?.startsWith("ok:")) {
-        const resultStats = await stat(resultPath);
-        if (resultStats.size > 4_096) {
-          return { ok: false, code: "output-too-large", message: "Ownership probe output is too large" };
-        }
-        const bytes = await readFile(resultPath);
-        if (!verifyOwnershipSignature(bytes, completion, authenticationKey)) {
-          return { ok: false, code: "nonzero-exit", message: "authentication" };
-        }
-        const text = bytes.toString("utf8").replace(/^\uFEFF/, "").trim();
-        try {
-          return { ok: true, value: JSON.parse(text) as unknown };
-        } catch {
-          return { ok: false, code: "malformed-json", message: "Ownership probe returned invalid JSON" };
-        }
-      }
-      if (child.exitCode !== null) {
-        exitedAt ??= Date.now();
-        if (Date.now() - exitedAt >= 100) {
-          return {
-            ok: false,
-            code: "spawn-failed",
-            message: "PowerShell exited before completing the ownership probe",
-          };
-        }
-      }
-      await Bun.sleep(25);
+    if (invocation.error !== undefined) {
+      const code = (invocation.error as NodeJS.ErrnoException).code;
+      return code === "ETIMEDOUT"
+        ? { ok: false, code: "timeout", message: "Ownership probe timed out" }
+        : { ok: false, code: "spawn-failed", message: "PowerShell failed to start" };
     }
-    child.kill();
-    return { ok: false, code: "timeout", message: "Ownership probe timed out" };
-  } catch (error) {
-    child?.kill();
+    const completion = await readFile(completionPath, "utf8").catch(() => undefined);
+    if (completion?.startsWith("error:")) {
+      return {
+        ok: false,
+        code: "nonzero-exit",
+        message: completion.slice("error:".length),
+      };
+    }
+    if (!completion?.startsWith("ok:")) {
+      return {
+        ok: false,
+        code: "nonzero-exit",
+        message: "other",
+      };
+    }
+    const resultStats = await stat(resultPath);
+    if (resultStats.size > 4_096) {
+      return { ok: false, code: "output-too-large", message: "Ownership probe output is too large" };
+    }
+    const bytes = await readFile(resultPath);
+    if (!verifyOwnershipSignature(bytes, completion, authenticationKey)) {
+      return { ok: false, code: "nonzero-exit", message: "authentication" };
+    }
+    const text = bytes.toString("utf8").replace(/^\uFEFF/, "").trim();
+    try {
+      return { ok: true, value: JSON.parse(text) as unknown };
+    } catch {
+      return { ok: false, code: "malformed-json", message: "Ownership probe returned invalid JSON" };
+    }
+  } catch {
     return {
       ok: false,
       code: "spawn-failed",
-      message: error instanceof Error ? error.message : "Ownership probe failed to start",
+      message: "Ownership probe failed",
     };
   } finally {
     await rm(captureRoot, { recursive: true, force: true }).catch(() => undefined);
