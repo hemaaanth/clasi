@@ -85,7 +85,7 @@ async function runOwnershipScript(
   for (const command of WINDOWS_POWERSHELL_COMMANDS) {
     const args = ["-NoProfile", "-NonInteractive", "-Command", script];
     const result = options.adapter === undefined
-      ? await runDefaultOwnershipCommand(command, args, script, env)
+      ? await runDefaultOwnershipCommand(command, script, env)
       : await runJsonCommand(command, args, commandOptions);
     if (!result.ok) {
       if (result.code === "spawn-failed") continue;
@@ -129,7 +129,6 @@ async function runOwnershipScript(
 
 async function runDefaultOwnershipCommand(
   command: string,
-  args: readonly string[],
   script: string,
   env: NodeJS.ProcessEnv,
 ): Promise<JsonCommandResult> {
@@ -149,17 +148,21 @@ async function runDefaultOwnershipCommand(
   ].join("; ");
   let child: Bun.Subprocess | undefined;
   try {
-    child = Bun.spawn([command, ...args.slice(0, -1), wrappedScript], {
-      env: {
-        ...env,
-        CLASI_OWNERSHIP_RESULT: resultPath,
-        CLASI_OWNERSHIP_COMPLETE: completionPath,
-        CLASI_OWNERSHIP_KEY: authenticationKey.toString("base64"),
+    const encodedScript = Buffer.from(wrappedScript, "utf16le").toString("base64");
+    child = Bun.spawn(
+      [command, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodedScript],
+      {
+        env: {
+          ...env,
+          CLASI_OWNERSHIP_RESULT: resultPath,
+          CLASI_OWNERSHIP_COMPLETE: completionPath,
+          CLASI_OWNERSHIP_KEY: authenticationKey.toString("base64"),
+        },
+        stdin: "ignore",
+        stdout: "ignore",
+        stderr: "ignore",
       },
-      stdin: "ignore",
-      stdout: "ignore",
-      stderr: "ignore",
-    });
+    );
     child.unref();
     const deadline = Date.now() + 30_000;
     while (Date.now() < deadline) {
