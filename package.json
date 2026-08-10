@@ -1,0 +1,37 @@
+{
+  "name": "clasi",
+  "version": "0.1.0",
+  "description": "Continuous learning and self-improvement for OMP",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "bin": {
+    "clasi": "./bin/clasi.ts"
+  },
+  "files": [
+    "bin",
+    "skills",
+    "src",
+    "LICENSE",
+    "README.md"
+  ],
+  "omp": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@oh-my-pi/pi-coding-agent": ">=17.2.4 <18"
+  },
+  "devDependencies": {
+    "@oh-my-pi/pi-coding-agent": "17.2.4",
+    "@types/bun": "1.3.14",
+    "typescript": "7.0.2"
+  }
+}
