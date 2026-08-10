@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { chmod, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -77,7 +77,9 @@ describe("ConfigService", () => {
         napkinCategoryCap: 8,
         contextCharacterCap: 4_000,
       });
-      expect((await stat(fixture.environment.paths.config)).mode & 0o777).toBe(0o600);
+      if (process.platform !== "win32") {
+        expect((await stat(fixture.environment.paths.config)).mode & 0o777).toBe(0o600);
+      }
     });
   });
 
@@ -188,8 +190,14 @@ describe("ConfigService", () => {
 
   test("rejects changed control-root safety without writing", async () => {
     await withConfigFixture(async fixture => {
-      await chmod(fixture.environment.roots.controlRoot, 0o755);
-      const result = await new ConfigService(fixture.environment).update({
+      const changedEnvironment = {
+        ...fixture.environment,
+        controlPin: {
+          ...fixture.environment.controlPin,
+          inode: fixture.environment.controlPin.inode + 1n,
+        },
+      };
+      const result = await new ConfigService(changedEnvironment).update({
         napkinCategoryCap: 7,
         confirmed: true,
       });

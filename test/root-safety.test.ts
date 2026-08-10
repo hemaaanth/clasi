@@ -51,25 +51,27 @@ function ownershipPayload(
 
 describe("two-root path layout", () => {
   test("resolves configurable shared data separately from machine control state", () => {
+    const home = join(tmpdir(), "home", "tester");
+    const agentDirectory = join(home, ".omp", "agent");
     const roots = resolveClasiRoots({
       env: {
-        HOME: "/home/tester",
-        PI_CODING_AGENT_DIR: "/home/tester/.omp/agent",
+        HOME: home,
+        PI_CODING_AGENT_DIR: agentDirectory,
       },
       config: { dataRoot: "${HOME}/Synced/clasi" },
     });
     const paths = createClasiPaths(roots);
 
     expect(roots).toEqual({
-      controlRoot: normalize("/home/tester/.omp/agent/clasi"),
-      dataRoot: normalize("/home/tester/Synced/clasi"),
+      controlRoot: join(agentDirectory, "clasi"),
+      dataRoot: join(home, "Synced", "clasi"),
     });
     expect(paths.context({ type: "repository", id: opaque("repo", 1) })).toBe(
-      join(normalize("/home/tester/Synced/clasi"), "scopes", "repositories", opaque("repo", 1), "context.md"),
+      join(home, "Synced", "clasi", "scopes", "repositories", opaque("repo", 1), "context.md"),
     );
-    expect(paths.machineId).toBe(join(normalize("/home/tester/.omp/agent/clasi"), "machine-id"));
+    expect(paths.machineId).toBe(join(agentDirectory, "clasi", "machine-id"));
     expect(paths.lock(opaque("doc", 1))).toBe(
-      join(normalize("/home/tester/.omp/agent/clasi"), "locks", opaque("doc", 1)),
+      join(agentDirectory, "clasi", "locks", opaque("doc", 1)),
     );
   });
 
