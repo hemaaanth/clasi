@@ -90,8 +90,8 @@ A successful or partial result exits with status 0. A choice-required or setup-n
 
 clasi separates machine-local control state from user data:
 
-- The control root is `<PI_CODING_AGENT_DIR>/clasi`. It contains local configuration, the machine ID, repository attachments, locks, and validated last-good views.
-- The data root contains Context, Napkins, Papercuts, revisions, conflicts, and transaction state. `CLASI_HOME` selects this root. Without it, interactive setup uses `<PI_CODING_AGENT_DIR>/clasi/data`.
+- The control root is `<OMP agent directory>/clasi`. OMP normally resolves the agent directory to `~/.omp/agent`; `PI_CODING_AGENT_DIR` can override it. The root contains local configuration, the machine ID, repository attachments, locks, and validated last-good views.
+- The data root contains Context, Napkins, Papercuts, revisions, conflicts, and transaction state. `CLASI_HOME` selects this root. Without it, interactive setup uses `<OMP agent directory>/clasi/data`.
 
 To use a shared or externally synchronized root, set `CLASI_HOME` before starting OMP, then run:
 
@@ -99,7 +99,15 @@ To use a shared or externally synchronized root, set `CLASI_HOME` before startin
 /clasi setup
 ```
 
-The interactive flow shows detected machine facts, accepts optional global and machine preferences plus an optional instruction file, and presents one final Commit or Cancel choice. Configuration is written last.
+clasi detects safe machine facts such as WSL, OS, architecture, shell, and package managers automatically. Select **Use recommended defaults** to finish with no typing beyond the final confirmation.
+
+Select **Customize 3 optional preferences** only when you want to add:
+
+1. A global preference used in every repository, such as `Prefer concise explanations and minimal changes`.
+2. A machine-specific preference, such as `Use WSL paths when commands cross into Windows`.
+3. An absolute path to a Markdown instruction file. The import is staged for review rather than trusted automatically.
+
+Each custom step offers a skip choice. The final screen shows exactly what will be stored; nothing is written until **Finish clasi setup** is confirmed.
 
 For one-shot provider-free setup, pass an absolute root:
 
