@@ -208,8 +208,8 @@ export class RepositoryRegistry {
         });
         break;
       } catch (error) {
-        if (!(error instanceof LockError) || error.code !== "lock-held" || attempt >= 100) throw error;
-        await delay(2);
+        if (!(error instanceof LockError) || error.code !== "lock-held" || attempt >= 1_000) throw error;
+        await delay(5);
       }
     }
     try {

@@ -1,5 +1,5 @@
 import { constants } from "node:fs";
-import { access, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { access, mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import {
   basename,
@@ -69,10 +69,11 @@ export async function createIsolatedRoots(options: {
   parent?: string;
   prefix?: string;
 } = {}): Promise<IsolatedRoots> {
-  const parent = resolve(options.parent ?? tmpdir());
+  const parentInput = resolve(options.parent ?? tmpdir());
   const prefix = options.prefix ?? "clasi-smoke-";
   if (!/^[A-Za-z0-9._-]+-$/.test(prefix)) throw new IsolationError("invalid-prefix");
-  await mkdir(parent, { recursive: true, mode: 0o700 });
+  await mkdir(parentInput, { recursive: true, mode: 0o700 });
+  const parent = await realpath(parentInput);
   const root = await mkdtemp(join(parent, prefix));
 
   try {

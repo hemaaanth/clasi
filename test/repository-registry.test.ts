@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createClasiPaths } from "../src/paths.ts";
@@ -124,7 +124,7 @@ describe("repository registry", () => {
 async function withRegistry(
   run: (fixture: { registry: RepositoryRegistry; paths: ReturnType<typeof createClasiPaths> }) => Promise<void>,
 ): Promise<void> {
-  const temporary = await mkdtemp(join(tmpdir(), "clasi-registry-test-"));
+  const temporary = await realpath(await mkdtemp(join(tmpdir(), "clasi-registry-test-")));
   try {
     const controlRoot = join(temporary, "control");
     const dataRoot = join(temporary, "data");

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -205,7 +205,7 @@ interface ConfigFixture {
 }
 
 async function withConfigFixture(run: (fixture: ConfigFixture) => Promise<void>): Promise<void> {
-  const root = await mkdtemp(join(tmpdir(), "clasi-config-service-"));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "clasi-config-service-")));
   try {
     const controlRoot = join(root, "control");
     const dataRoot = join(root, "data");

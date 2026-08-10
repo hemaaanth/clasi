@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
@@ -102,7 +102,7 @@ describe("resolveRuntimeEnvironment", () => {
   });
 
   test("fresh homes and missing config request setup without creating a fallback root", async () => {
-    const temporary = await mkdtemp(join(tmpdir(), "clasi-runtime-fresh-"));
+    const temporary = await realpath(await mkdtemp(join(tmpdir(), "clasi-runtime-fresh-")));
     try {
       const home = join(temporary, "home");
       const agentRoot = join(temporary, "agent");
@@ -303,7 +303,7 @@ describe("resolveRuntimeEnvironment", () => {
 });
 
 async function withRuntimeFixture(run: (fixture: RuntimeFixture) => Promise<void>): Promise<void> {
-  const temporary = await mkdtemp(join(tmpdir(), "clasi-runtime-environment-"));
+  const temporary = await realpath(await mkdtemp(join(tmpdir(), "clasi-runtime-environment-")));
   const home = join(temporary, "home");
   const agentRoot = join(temporary, "agent");
   const controlRoot = join(agentRoot, "clasi");

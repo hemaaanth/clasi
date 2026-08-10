@@ -279,8 +279,8 @@ export class MarkdownStore {
         lock = await acquireDocumentLock(lockPath, await this.#currentLockOwner());
         break;
       } catch (error) {
-        if (!(error instanceof LockError) || error.code !== "lock-held" || attempt >= 100) throw error;
-        await delay(2);
+        if (!(error instanceof LockError) || error.code !== "lock-held" || attempt >= 1_000) throw error;
+        await delay(5);
       }
     }
     try {
@@ -315,8 +315,8 @@ export class MarkdownStore {
         lock = await acquireDocumentLock(lockPath, await this.#currentLockOwner());
         break;
       } catch (error) {
-        if (!(error instanceof LockError) || error.code !== "lock-held" || attempt >= 100) throw error;
-        await delay(2);
+        if (!(error instanceof LockError) || error.code !== "lock-held" || attempt >= 1_000) throw error;
+        await delay(5);
       }
     }
     try {
@@ -372,10 +372,10 @@ export class MarkdownStore {
             lock = await acquireDocumentLock(lockPath, await this.#currentLockOwner());
             break;
           } catch (error) {
-            if (!(error instanceof LockError) || error.code !== "lock-held" || attempt >= 100) {
+            if (!(error instanceof LockError) || error.code !== "lock-held" || attempt >= 1_000) {
               throw error;
             }
-            await delay(2);
+            await delay(5);
           }
         }
         locks.push(lock);

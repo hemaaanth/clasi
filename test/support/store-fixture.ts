@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createClasiPaths } from "../../src/paths.ts";
@@ -28,7 +28,7 @@ export async function withStoreFixture(
   run: (fixture: StoreFixture) => Promise<void>,
   fileSystem?: StoreFileSystem,
 ): Promise<void> {
-  const temporary = await mkdtemp(join(tmpdir(), "clasi-store-test-"));
+  const temporary = await realpath(await mkdtemp(join(tmpdir(), "clasi-store-test-")));
   try {
     const controlRoot = join(temporary, "control");
     const dataRoot = join(temporary, "data");

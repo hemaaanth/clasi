@@ -1,8 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { mkdtemp } from "node:fs/promises";
 import { decodeMarkdown } from "../src/markdown-codec.ts";
 import type { MachineFacts } from "../src/machine.ts";
 import { commitSetup, prepareSetup, SetupError } from "../src/onboarding.ts";
@@ -209,7 +208,7 @@ async function withSetupFixture(
     home: string;
   }) => Promise<void>,
 ): Promise<void> {
-  const temporary = await mkdtemp(join(tmpdir(), "clasi-onboarding-"));
+  const temporary = await realpath(await mkdtemp(join(tmpdir(), "clasi-onboarding-")));
   const fixture = {
     temporary,
     roots: {

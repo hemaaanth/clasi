@@ -4,6 +4,7 @@ import {
   mkdir,
   mkdtemp,
   rename,
+  realpath,
   rm,
   symlink,
   writeFile,
@@ -232,7 +233,7 @@ describe("native Windows ownership probe", () => {
 });
 
 async function withTempDirectory(run: (path: string) => Promise<void>): Promise<void> {
-  const path = await mkdtemp(join(tmpdir(), "clasi-root-test-"));
+  const path = await realpath(await mkdtemp(join(tmpdir(), "clasi-root-test-")));
   try {
     await run(path);
   } finally {
