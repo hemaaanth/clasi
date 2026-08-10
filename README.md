@@ -30,7 +30,7 @@ omp plugin link /absolute/path/to/clasi
 From Git:
 
 ```bash
-omp plugin install github:<owner>/<repo>
+omp plugin install github:hemaaanth/clasi
 ```
 
 Restart OMP after linking, installing, upgrading, or uninstalling the plugin. Then check discovery:
