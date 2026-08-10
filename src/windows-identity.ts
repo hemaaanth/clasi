@@ -66,7 +66,7 @@ async function runOwnershipScript(
     ...(options.adapter ? { adapter: options.adapter } : {}),
     env: { ...(options.env ?? process.env), CLASI_ROOT_CHECK: root },
     maxOutputBytes: 4_096,
-    timeoutMs: 10_000,
+    timeoutMs: 30_000,
   };
   const result = await runJsonCommand(
     "powershell.exe",

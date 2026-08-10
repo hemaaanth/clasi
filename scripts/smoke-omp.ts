@@ -805,9 +805,14 @@ async function runCheckedClasiSetup(
   adapter: ProcessAdapter,
   request: ProcessRequest,
 ): Promise<void> {
-  const result = await adapter(request);
+  const checkedRequest = {
+    timeoutMs: PROCESS_TIMEOUT_MS,
+    maxOutputBytes: MAX_JSON_BYTES,
+    ...request,
+  };
+  const result = await adapter(checkedRequest);
   try {
-    await runCheckedProcess(async () => result, request);
+    await runCheckedProcess(async () => result, checkedRequest);
   } catch (error) {
     if (!(error instanceof IsolationError) || error.code !== "process-failed") throw error;
     const value = parseJson(result.stdout, "clasi-setup-response-invalid");
