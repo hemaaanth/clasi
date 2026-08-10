@@ -12,7 +12,7 @@ const OWNERSHIP_TIMEOUT_MS = 30_000;
 export const WINDOWS_OWNERSHIP_SCRIPT = [
   "$ErrorActionPreference = 'Stop'",
   "$current = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value",
-  "if ($PSVersionTable.PSEdition -eq 'Core') { $directory = New-Object System.IO.DirectoryInfo($env:CLASI_ROOT_CHECK); $acl = [System.IO.FileSystemAclExtensions]::GetAccessControl($directory) } else { $acl = [System.IO.Directory]::GetAccessControl($env:CLASI_ROOT_CHECK) }",
+  "if ($PSVersionTable.PSEdition -eq 'Core') { $directory = [System.IO.DirectoryInfo]::new($env:CLASI_ROOT_CHECK); $acl = [System.IO.FileSystemAclExtensions]::GetAccessControl($directory) } else { $acl = [System.IO.Directory]::GetAccessControl($env:CLASI_ROOT_CHECK) }",
   "$owner = $acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value",
   "$descriptor = $acl.GetSecurityDescriptorSddlForm([System.Security.AccessControl.AccessControlSections]::Owner -bor [System.Security.AccessControl.AccessControlSections]::Access)",
   "@{ current_sid = $current; owner_sid = $owner; security_descriptor = $descriptor } | ConvertTo-Json -Compress",
@@ -22,14 +22,14 @@ const WINDOWS_CREATE_PRIVATE_ROOT_SCRIPT = [
   "$ErrorActionPreference = 'Stop'",
   "$current = [System.Security.Principal.WindowsIdentity]::GetCurrent().User",
   "[System.IO.File]::WriteAllText($env:CLASI_OWNERSHIP_COMPLETE, 'step:identity')",
-  "$security = New-Object System.Security.AccessControl.DirectorySecurity",
+  "$security = [System.Security.AccessControl.DirectorySecurity]::new()",
   "[System.IO.File]::WriteAllText($env:CLASI_OWNERSHIP_COMPLETE, 'step:security')",
   "$security.SetAccessRuleProtection($true, $false)",
   "[System.IO.File]::WriteAllText($env:CLASI_OWNERSHIP_COMPLETE, 'step:protection')",
   "$security.SetOwner($current)",
   "[System.IO.File]::WriteAllText($env:CLASI_OWNERSHIP_COMPLETE, 'step:owner')",
   "$inheritance = [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [System.Security.AccessControl.InheritanceFlags]::ObjectInherit",
-  "$rule = New-Object System.Security.AccessControl.FileSystemAccessRule($current, [System.Security.AccessControl.FileSystemRights]::FullControl, $inheritance, [System.Security.AccessControl.PropagationFlags]::None, [System.Security.AccessControl.AccessControlType]::Allow)",
+  "$rule = [System.Security.AccessControl.FileSystemAccessRule]::new($current, [System.Security.AccessControl.FileSystemRights]::FullControl, $inheritance, [System.Security.AccessControl.PropagationFlags]::None, [System.Security.AccessControl.AccessControlType]::Allow)",
   "[System.IO.File]::WriteAllText($env:CLASI_OWNERSHIP_COMPLETE, 'step:rule')",
   "$security.AddAccessRule($rule)",
   "[System.IO.File]::WriteAllText($env:CLASI_OWNERSHIP_COMPLETE, 'step:access')",
@@ -168,8 +168,8 @@ async function runDefaultOwnershipCommand(
   const authenticationKey = randomBytes(32);
   const wrappedScript = [
     "[System.IO.File]::WriteAllText($env:CLASI_OWNERSHIP_COMPLETE, 'started')",
-    "$encoding = New-Object System.Text.UTF8Encoding($false)",
-    `try { $result = & { ${script} }; $text = [string]$result; $key = [Convert]::FromBase64String($env:CLASI_OWNERSHIP_KEY); $hmac = New-Object System.Security.Cryptography.HMACSHA256; try { $hmac.Key = $key; $signature = [Convert]::ToBase64String($hmac.ComputeHash($encoding.GetBytes($text))) } finally { $hmac.Dispose() }; [System.IO.File]::WriteAllText($env:CLASI_OWNERSHIP_RESULT, $text, $encoding); [System.IO.File]::WriteAllText($env:CLASI_OWNERSHIP_COMPLETE, "ok:$signature", $encoding) }`,
+    "$encoding = [System.Text.UTF8Encoding]::new($false)",
+    `try { $result = & { ${script} }; $text = [string]$result; $key = [Convert]::FromBase64String($env:CLASI_OWNERSHIP_KEY); $hmac = [System.Security.Cryptography.HMACSHA256]::new(); try { $hmac.Key = $key; $signature = [Convert]::ToBase64String($hmac.ComputeHash($encoding.GetBytes($text))) } finally { $hmac.Dispose() }; [System.IO.File]::WriteAllText($env:CLASI_OWNERSHIP_RESULT, $text, $encoding); [System.IO.File]::WriteAllText($env:CLASI_OWNERSHIP_COMPLETE, "ok:$signature", $encoding) }`,
     "catch { $name = $_.Exception.GetType().Name; if ($name -eq 'UnauthorizedAccessException') { $kind = 'access' } elseif ($name -eq 'MethodException' -or $name -eq 'MethodInvocationException') { $kind = 'method' } elseif ($name -eq 'PlatformNotSupportedException') { $kind = 'platform' } elseif ($name -eq 'RuntimeException') { $kind = 'runtime' } else { $kind = 'other' }; [System.IO.File]::WriteAllText($env:CLASI_OWNERSHIP_COMPLETE, \"error:$kind\", $encoding) }",
   ].join("\n");
   let child: ReturnType<typeof spawn> | undefined;
