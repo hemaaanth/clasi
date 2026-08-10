@@ -160,6 +160,7 @@ async function runDefaultOwnershipCommand(
   const scriptPath = join(captureRoot, "probe.ps1");
   const authenticationKey = randomBytes(32);
   const wrappedScript = [
+    "[System.IO.File]::WriteAllText($env:CLASI_OWNERSHIP_COMPLETE, 'started')",
     "$encoding = New-Object System.Text.UTF8Encoding($false)",
     `try { $result = & { ${script} }; $text = [string]$result; $key = [Convert]::FromBase64String($env:CLASI_OWNERSHIP_KEY); $hmac = New-Object System.Security.Cryptography.HMACSHA256; try { $hmac.Key = $key; $signature = [Convert]::ToBase64String($hmac.ComputeHash($encoding.GetBytes($text))) } finally { $hmac.Dispose() }; [System.IO.File]::WriteAllText($env:CLASI_OWNERSHIP_RESULT, $text, $encoding); [System.IO.File]::WriteAllText($env:CLASI_OWNERSHIP_COMPLETE, "ok:$signature", $encoding) }`,
     "catch { $name = $_.Exception.GetType().Name; if ($name -eq 'UnauthorizedAccessException') { $kind = 'access' } elseif ($name -eq 'MethodException' -or $name -eq 'MethodInvocationException') { $kind = 'method' } elseif ($name -eq 'PlatformNotSupportedException') { $kind = 'platform' } elseif ($name -eq 'RuntimeException') { $kind = 'runtime' } else { $kind = 'other' }; [System.IO.File]::WriteAllText($env:CLASI_OWNERSHIP_COMPLETE, \"error:$kind\", $encoding) }",
@@ -185,11 +186,15 @@ async function runDefaultOwnershipCommand(
     let completion: string | undefined;
     while (Date.now() < deadline) {
       completion = await readFile(completionPath, "utf8").catch(() => undefined);
-      if (completion !== undefined) break;
+      if (completion !== undefined && completion !== "started") break;
       await Bun.sleep(25);
     }
-    if (completion === undefined) {
-      return { ok: false, code: "timeout", message: "Ownership probe timed out" };
+    if (completion === undefined || completion === "started") {
+      return {
+        ok: false,
+        code: "timeout",
+        message: completion === "started" ? "runtime" : "Ownership probe timed out",
+      };
     }
     
     if (completion?.startsWith("error:")) {
