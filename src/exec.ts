@@ -193,17 +193,17 @@ export const runProcessFileBacked: ProcessAdapter = async invocation => {
         clearTimeout(timer);
         resolveCompletion(result);
       };
+      const exited = (code: number | null): ProcessResult => ({
+        status: "exited",
+        exitCode: code ?? 1,
+        stdout: new Uint8Array(),
+        stderr: new Uint8Array(),
+      });
       child.once("error", error => {
         finish({ status: "spawn-failed", message: error.message });
       });
-      child.once("close", code => {
-        finish({
-          status: "exited",
-          exitCode: code ?? 1,
-          stdout: new Uint8Array(),
-          stderr: new Uint8Array(),
-        });
-      });
+      child.once("exit", code => finish(exited(code)));
+      child.once("close", code => finish(exited(code)));
       timer = setTimeout(() => {
         if (settled) return;
         child.kill();
