@@ -159,10 +159,13 @@ export async function runOmpSmoke(
     await writeFile(preservationFile, "preserved\n", { flag: "wx", mode: 0o600 });
     const preservationBytes = await readFile(preservationFile);
 
-    stage = "boundaries";
+    stage = "lossless-replacement";
     await runLosslessReplacementCheck(roots);
+    stage = "lock-contention";
     await runLockContentionCheck(roots);
+    stage = "path-normalization";
     runPathNormalizationCheck(roots);
+    stage = "windows-boundary";
     const windowsSidAcl = await runWindowsBoundaryCheck(roots);
     stage = "plugin-link";
 
