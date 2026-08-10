@@ -4,6 +4,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { acquireDocumentLock, LockError } from "../src/lock.ts";
 import { RootSafetyError, assertRootUnchanged, pinRoot } from "../src/root-safety.ts";
+import { probeWindowsRootOwnership } from "../src/windows-identity.ts";
 import {
   CLASI_VERSION,
   EVIDENCE_SCHEMA_VERSION,
@@ -282,9 +283,35 @@ export async function runOmpSmoke(
       ...environment,
       PATH: cleanPath(runtimeDirectories),
     };
+    if (process.platform === "win32") {
+      stage = "windows-ownership";
+      const ownership = await probeWindowsRootOwnership(join(roots.agent, "clasi"), {
+        env: cleanEnvironment,
+      });
+      if (!ownership.writable) throw new IsolationError(`ownership-${ownership.code}`);
+    }
     const installedBin = await resolveExecutable("clasi", cleanEnvironment);
     assertPathInsideRoot(roots.root, installedBin);
     assertPathInsideRoot(roots.root, await realpath(installedBin));
+    const installedSource = join(
+      roots.bunInstall,
+      "install",
+      "global",
+      "node_modules",
+      "clasi",
+      "bin",
+      "clasi.ts",
+    );
+    assertPathInsideRoot(roots.root, installedSource);
+    await access(installedSource);
+    stage = "global-source-status";
+    const globalSourceStatus = await runCheckedClasiStatus(spawnProcessFileBacked, {
+      command: bunExecutable,
+      args: [installedSource, "status"],
+      cwd: packageRoot,
+      env: cleanEnvironment,
+    });
+    assertClasiStatus(globalSourceStatus, roots.clasiHome);
     stage = "global-status";
     const globalStatus = await runCheckedClasiStatus(
       dependencies.process ?? spawnProcessFileBacked,
