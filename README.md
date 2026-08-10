@@ -213,8 +213,8 @@ No platform or model gate is claimed until its evidence file exists from the act
 | Gate | Status |
 | --- | --- |
 | WSL platform | Passed on WSL x64 with OMP 17.2.4 and 17.2.12 through pinned public Git installs |
-| macOS platform | Pending actual platform evidence |
-| Native Windows platform | Pending actual platform evidence |
+| macOS platform | Passed on macOS arm64 with OMP 17.2.4 and 17.2.12 through pinned public Git installs |
+| Native Windows platform | Blocked: 438/438 native tests pass, but the isolated OMP smoke currently fails during setup before public Git installation or evidence emission |
 | Release-model capture evaluation | Passed 10/10 with `openai-codex/gpt-5.4`; aggregate evidence generated |
 
 Native Linux may work through Pi, but it is not a first-release platform gate. CI on Ubuntu does not count as WSL evidence. `release:validate` fails when required actual evidence or an OMP matrix row is missing. Generated evidence is a release artifact, not source, and CI does not commit it.
