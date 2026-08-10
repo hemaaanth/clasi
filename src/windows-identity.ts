@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { isAbsolute, join, win32 } from "node:path";
 
 const WINDOWS_POWERSHELL_COMMANDS = ["powershell.exe", "pwsh.exe"] as const;
-const OWNERSHIP_TIMEOUT_MS = 30_000;
+const OWNERSHIP_TIMEOUT_MS = 45_000;
 
 export const WINDOWS_OWNERSHIP_SCRIPT = [
   "$ErrorActionPreference = 'Stop'",
