@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { access, cp, link, lstat, mkdir, readFile, readdir, realpath, rename, unlink, writeFile } from "node:fs/promises";
+import { access, cp, link, lstat, mkdir, readFile, readdir, realpath, rename, rm, unlink, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { acquireDocumentLock, LockError } from "../src/lock.ts";
 import { RootSafetyError, assertRootUnchanged, pinRoot } from "../src/root-safety.ts";
-import { probeWindowsRootOwnership } from "../src/windows-identity.ts";
+import { createWindowsPrivateRoot, probeWindowsRootOwnership } from "../src/windows-identity.ts";
 import {
   CLASI_VERSION,
   EVIDENCE_SCHEMA_VERSION,
@@ -140,6 +140,14 @@ export async function runOmpSmoke(
       bareRepository,
       environment,
     );
+
+    if (process.platform === "win32") {
+      stage = "windows-private-root";
+      const privateRoot = join(roots.root, "private-root-probe");
+      const ownership = await createWindowsPrivateRoot(privateRoot, { env: environment });
+      if (!ownership.writable) throw new IsolationError(`ownership-${ownership.code}`);
+      await rm(privateRoot, { recursive: true, force: true });
+    }
 
     const paths = expectedInstallPaths(roots, packageRoot);
     for (const path of Object.values(paths)) assertPathInsideRoot(roots.root, path);
