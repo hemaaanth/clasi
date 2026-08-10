@@ -109,7 +109,6 @@ export async function createIsolatedRoots(options: {
       roots.xdgCache,
       roots.agent,
       roots.bunInstall,
-      roots.clasiHome,
       roots.work,
     ].map(path => mkdir(path, { recursive: true, mode: 0o700 })));
     const frozen = Object.freeze(roots);

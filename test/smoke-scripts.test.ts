@@ -44,7 +44,7 @@ describe("public smoke scripts", () => {
     });
   });
 
-  test("isolates roots and refuses unissued cleanup targets", async () => {
+  test("isolates roots, leaves the data root for secure setup, and refuses unissued cleanup", async () => {
     const parent = await mkdtemp(join(tmpdir(), "clasi-smoke-test-parent-"));
     try {
       const roots = await createIsolatedRoots({ parent, prefix: "case-" });
@@ -52,6 +52,7 @@ describe("public smoke scripts", () => {
         expect(assertPathInsideRoot(roots.root, roots.environment[key]))
           .toBe(resolve(roots.environment[key]));
       }
+      await expect(access(roots.clasiHome)).rejects.toThrow();
       expect(() => assertPathInsideRoot(roots.root, resolve(roots.root, "..", "outside")))
         .toThrow(new IsolationError("path-escape"));
       const outside = join(parent, "must-survive");
