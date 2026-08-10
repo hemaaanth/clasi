@@ -174,7 +174,9 @@ async function runDefaultOwnershipCommand(
   ].join("\n");
   let child: ReturnType<typeof spawn> | undefined;
   let completedBySentinel = false;
+  const probeKind = script === WINDOWS_CREATE_PRIVATE_ROOT_SCRIPT ? "create" : "inspect";
   try {
+    if (env.CLASI_DEBUG_CHECK === "1") console.error(`clasi ownership ${probeKind} probe started`);
     await writeFile(scriptPath, wrappedScript, { encoding: "utf8", mode: 0o600 });
     child = spawn(
       command,
@@ -198,6 +200,7 @@ async function runDefaultOwnershipCommand(
       await Bun.sleep(25);
     }
     completedBySentinel = completion?.startsWith("ok:") === true || completion?.startsWith("error:") === true;
+    if (env.CLASI_DEBUG_CHECK === "1") console.error(`clasi ownership ${probeKind} probe completed`);
     if (completion === undefined || (!completion.startsWith("ok:") && !completion.startsWith("error:"))) {
       if (env.CLASI_DEBUG_CHECK === "1") {
         console.error(`clasi ownership probe stalled: ${completion ?? "not-started"}`);

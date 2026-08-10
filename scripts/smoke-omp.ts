@@ -591,6 +591,7 @@ async function createSmokeEnvironment(roots: IsolatedRoots): Promise<Record<stri
     NO_PROXY: "127.0.0.1,localhost,::1",
     no_proxy: "127.0.0.1,localhost,::1",
   };
+  if (process.platform === "win32") environment.CLASI_DEBUG_CHECK = "1";
   for (const key of ["SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT"] as const) {
     const value = process.env[key];
     if (value !== undefined) environment[key] = value;
