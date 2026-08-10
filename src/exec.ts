@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 65_536;
+const EXIT_OUTPUT_GRACE_MS = 100;
 
 export interface ProcessInvocation {
   command: string;
@@ -123,11 +124,15 @@ export const runProcess: ProcessAdapter = invocation => {
   let outputBytes = 0;
   let settled = false;
   let timer: NodeJS.Timeout | undefined;
+  let exitTimer: NodeJS.Timeout | undefined;
 
   const finish = (result: ProcessResult): void => {
     if (settled) return;
     settled = true;
     clearTimeout(timer);
+    clearTimeout(exitTimer);
+    child.stdout.destroy();
+    child.stderr.destroy();
     resolve(result);
   };
   const collect = (target: Buffer[], chunk: Buffer): void => {
@@ -143,14 +148,17 @@ export const runProcess: ProcessAdapter = invocation => {
   child.stdout.on("data", (chunk: Buffer) => collect(stdout, chunk));
   child.stderr.on("data", (chunk: Buffer) => collect(stderr, chunk));
   child.once("error", error => finish({ status: "spawn-failed", message: error.message }));
-  child.once("close", code => {
-    finish({
-      status: "exited",
-      exitCode: code ?? 1,
-      stdout: Buffer.concat(stdout),
-      stderr: Buffer.concat(stderr),
-    });
+  const exited = (code: number | null): ProcessResult => ({
+    status: "exited",
+    exitCode: code ?? 1,
+    stdout: Buffer.concat(stdout),
+    stderr: Buffer.concat(stderr),
   });
+  child.once("exit", code => {
+    if (settled) return;
+    exitTimer = setTimeout(() => finish(exited(code)), EXIT_OUTPUT_GRACE_MS);
+  });
+  child.once("close", code => finish(exited(code)));
 
   timer = setTimeout(() => {
     child.kill();
