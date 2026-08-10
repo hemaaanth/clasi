@@ -9,13 +9,21 @@ export const WINDOWS_OWNERSHIP_SCRIPT = [
   "@{ current_sid = $current; owner_sid = $owner } | ConvertTo-Json -Compress",
 ].join("; ");
 
-const WINDOWS_CLAIM_OWNERSHIP_SCRIPT = [
+const WINDOWS_CREATE_PRIVATE_ROOT_SCRIPT = [
   "$ErrorActionPreference = 'Stop'",
   "$current = [System.Security.Principal.WindowsIdentity]::GetCurrent().User",
-  "$acl = [System.IO.Directory]::GetAccessControl($env:CLASI_ROOT_CHECK)",
-  "$acl.SetOwner($current)",
-  "[System.IO.Directory]::SetAccessControl($env:CLASI_ROOT_CHECK, $acl)",
-  "$owner = [System.IO.Directory]::GetAccessControl($env:CLASI_ROOT_CHECK).GetOwner([System.Security.Principal.SecurityIdentifier]).Value",
+  "$security = New-Object System.Security.AccessControl.DirectorySecurity",
+  "$security.SetAccessRuleProtection($true, $false)",
+  "$security.SetOwner($current)",
+  "$inheritance = [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [System.Security.AccessControl.InheritanceFlags]::ObjectInherit",
+  "$rule = New-Object System.Security.AccessControl.FileSystemAccessRule($current, [System.Security.AccessControl.FileSystemRights]::FullControl, $inheritance, [System.Security.AccessControl.PropagationFlags]::None, [System.Security.AccessControl.AccessControlType]::Allow)",
+  "$security.AddAccessRule($rule)",
+  "$created = [System.IO.Directory]::CreateDirectory($env:CLASI_ROOT_CHECK, $security)",
+  "$actual = $created.GetAccessControl()",
+  "$hasInheritedRule = $false",
+  "foreach ($access in $actual.Access) { if ($access.IsInherited) { $hasInheritedRule = $true } }",
+  "if ($hasInheritedRule) { throw 'Inherited access rule detected' }",
+  "$owner = $actual.GetOwner([System.Security.Principal.SecurityIdentifier]).Value",
   "@{ current_sid = $current.Value; owner_sid = $owner } | ConvertTo-Json -Compress",
 ].join("; ");
 
@@ -33,11 +41,11 @@ export interface WindowsOwnershipOptions {
   env?: NodeJS.ProcessEnv;
 }
 
-export async function claimWindowsRootOwnership(
+export async function createWindowsPrivateRoot(
   root: string,
   options: WindowsOwnershipOptions = {},
 ): Promise<WindowsOwnershipResult> {
-  return runOwnershipScript(root, WINDOWS_CLAIM_OWNERSHIP_SCRIPT, options);
+  return runOwnershipScript(root, WINDOWS_CREATE_PRIVATE_ROOT_SCRIPT, options);
 }
 
 export async function probeWindowsRootOwnership(

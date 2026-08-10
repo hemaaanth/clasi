@@ -24,7 +24,7 @@ import {
 } from "../src/root-safety.ts";
 import type { RootSafetyReasonCode } from "../src/root-safety.ts";
 import {
-  claimWindowsRootOwnership,
+  createWindowsPrivateRoot,
   WINDOWS_OWNERSHIP_SCRIPT,
   probeWindowsRootOwnership,
 } from "../src/windows-identity.ts";
@@ -207,15 +207,18 @@ describe("native Windows ownership probe", () => {
     expect(WINDOWS_OWNERSHIP_SCRIPT).not.toContain("Get-Acl");
   });
 
-  test("claims a newly created root for the current Windows identity", async () => {
+  test("creates a private root atomically with the current Windows identity", async () => {
     const adapter = new FakeProcessAdapter(
       exited('{"current_sid":"S-1-5-21-100","owner_sid":"S-1-5-21-100"}'),
     );
 
-    const result = await claimWindowsRootOwnership("C:\\safe", { adapter: adapter.run });
+    const result = await createWindowsPrivateRoot("C:\\safe", { adapter: adapter.run });
 
     expect(result).toEqual({ writable: true, sid: "S-1-5-21-100" });
-    expect(adapter.calls[0]?.args.join(" ")).toContain("SetAccessControl");
+    expect(adapter.calls[0]?.args.join(" ")).toContain("Directory]::CreateDirectory");
+    expect(adapter.calls[0]?.args.join(" ")).not.toContain("SetAccessControl");
+    expect(adapter.calls[0]?.args.join(" ")).toContain("SetAccessRuleProtection($true, $false)");
+    expect(adapter.calls[0]?.args.join(" ")).toContain("$access.IsInherited");
     expect(adapter.calls[0]?.env?.CLASI_ROOT_CHECK).toBe("C:\\safe");
   });
 
