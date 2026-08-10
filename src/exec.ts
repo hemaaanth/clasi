@@ -177,43 +177,31 @@ export const runProcessFileBacked: ProcessAdapter = async invocation => {
     open(stderrPath, "wx", 0o600),
   ]);
   try {
-    const child = spawn(invocation.command, [...invocation.args], {
-      cwd: invocation.cwd,
-      env: invocation.env,
-      shell: false,
-      stdio: ["ignore", stdoutHandle.fd, stderrHandle.fd],
-      windowsHide: true,
-    });
-    const completion = new Promise<ProcessResult>(resolveCompletion => {
-      let settled = false;
-      let timer: NodeJS.Timeout | undefined;
-      const finish = (result: ProcessResult): void => {
-        if (settled) return;
-        settled = true;
-        child.removeAllListeners();
-        child.unref();
-        clearTimeout(timer);
-        resolveCompletion(result);
-      };
-      const exited = (code: number | null): ProcessResult => ({
-        status: "exited",
-        exitCode: code ?? 1,
-        stdout: new Uint8Array(),
-        stderr: new Uint8Array(),
-      });
-      child.once("error", error => {
-        finish({ status: "spawn-failed", message: error.message });
-      });
-      child.once("exit", code => finish(exited(code)));
-      child.once("close", code => finish(exited(code)));
-      timer = setTimeout(() => {
-        if (settled) return;
-        child.kill();
-        finish({ status: "timed-out" });
-      }, invocation.timeoutMs);
+    const child = Bun.spawn([invocation.command, ...invocation.args], {
+      ...(invocation.cwd === undefined ? {} : { cwd: invocation.cwd }),
+      ...(invocation.env === undefined ? {} : { env: invocation.env }),
+      stdin: "ignore",
+      stdout: stdoutHandle.fd,
+      stderr: stderrHandle.fd,
     });
     await Promise.all([stdoutHandle.close(), stderrHandle.close()]);
-    const result = await completion;
+    let timer: NodeJS.Timeout | undefined;
+    const result = await Promise.race<ProcessResult>([
+      child.exited.then(exitCode => ({
+        status: "exited",
+        exitCode,
+        stdout: new Uint8Array(),
+        stderr: new Uint8Array(),
+      })),
+      new Promise<ProcessResult>(resolveTimeout => {
+        timer = setTimeout(() => {
+          child.kill();
+          resolveTimeout({ status: "timed-out" });
+        }, invocation.timeoutMs);
+      }),
+    ]);
+    clearTimeout(timer);
+    child.unref();
     if (result.status !== "exited") return result;
     const [stdoutStats, stderrStats] = await Promise.all([stat(stdoutPath), stat(stderrPath)]);
     if (stdoutStats.size + stderrStats.size > invocation.maxOutputBytes) {
