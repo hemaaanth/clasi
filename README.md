@@ -56,7 +56,7 @@ See OMP's [extension loading documentation](https://github.com/can1357/oh-my-pi/
 OMP plugin installation does not put package executables on your global `PATH`. Install the same Git package separately when you want the `clasi` command outside OMP:
 
 ```bash
-bun install --global github:<owner>/<repo>
+bun install --global github:hemaaanth/clasi
 ```
 
 Add the directory reported by `bun pm bin -g` to `PATH`, then verify the command:
