@@ -34,6 +34,21 @@ import type {
 } from "../src/windows-identity.ts";
 import { FakeProcessAdapter, exited } from "./support/fake-exec.ts";
 
+const WINDOWS_SID = "S-1-5-21-100";
+const WINDOWS_SECURITY_DESCRIPTOR =
+  "O:S-1-5-21-100D:P(A;OICI;FA;;;S-1-5-21-100)";
+
+function ownershipPayload(
+  owner = WINDOWS_SID,
+  securityDescriptor = WINDOWS_SECURITY_DESCRIPTOR,
+): string {
+  return JSON.stringify({
+    current_sid: WINDOWS_SID,
+    owner_sid: owner,
+    security_descriptor: securityDescriptor,
+  });
+}
+
 describe("two-root path layout", () => {
   test("resolves configurable shared data separately from machine control state", () => {
     const roots = resolveClasiRoots({
@@ -100,18 +115,25 @@ describe("root safety", () => {
     });
   });
 
-  test("pins native Windows ownership and rejects root metadata drift", async () => {
+  test("rechecks changed Windows roots without rejecting contained writes", async () => {
     await withTempDirectory(async temporary => {
       const root = join(temporary, "root");
       await createPrivateRoot(root);
       const adapter = new FakeProcessAdapter(
-        exited('{"current_sid":"S-1-5-21-100","owner_sid":"S-1-5-21-100"}'),
+        exited(ownershipPayload()),
+        exited(ownershipPayload()),
+        exited(ownershipPayload(WINDOWS_SID, `${WINDOWS_SECURITY_DESCRIPTOR}(A;;FA;;;WD)`)),
       );
       const windows = { adapter: adapter.run, env: { PATH: "C:\\Windows\\System32" } };
 
       const pin = await pinRoot(root, { platform: "win32", windowsOwnership: windows });
-      await chmod(root, 0o755);
+      await Bun.sleep(2);
+      await writeFile(join(root, "child"), "safe");
+      await expect(assertRootUnchanged(pin)).resolves.toBeUndefined();
+      expect(adapter.calls).toHaveLength(2);
 
+      await Bun.sleep(2);
+      await chmod(root, 0o755);
       await expectSafetyFailure(assertRootUnchanged(pin), "permissions-changed");
     });
   });
@@ -178,7 +200,7 @@ describe("root safety", () => {
 describe("native Windows ownership probe", () => {
   test("passes the root only through the environment and accepts matching SIDs", async () => {
     const adapter = new FakeProcessAdapter(
-      exited('{"current_sid":"S-1-5-21-100","owner_sid":"S-1-5-21-100"}'),
+      exited(ownershipPayload()),
     );
     const hostileRoot = 'C:\\Users\\A\"; Remove-Item C:\\\\*; #';
 
@@ -187,7 +209,11 @@ describe("native Windows ownership probe", () => {
       env: { PATH: "C:\\Windows\\System32" },
     });
 
-    expect(result).toEqual({ writable: true, sid: "S-1-5-21-100" });
+    expect(result).toEqual({
+      writable: true,
+      sid: WINDOWS_SID,
+      securityDescriptor: WINDOWS_SECURITY_DESCRIPTOR,
+    });
     expect(adapter.calls[0]?.command).toBe("powershell.exe");
     expect(adapter.calls[0]?.args).toEqual([
       "-NoProfile",
@@ -206,12 +232,16 @@ describe("native Windows ownership probe", () => {
 
   test("creates a private root atomically with the current Windows identity", async () => {
     const adapter = new FakeProcessAdapter(
-      exited('{"current_sid":"S-1-5-21-100","owner_sid":"S-1-5-21-100"}'),
+      exited(ownershipPayload()),
     );
 
     const result = await createWindowsPrivateRoot("C:\\safe", { adapter: adapter.run });
 
-    expect(result).toEqual({ writable: true, sid: "S-1-5-21-100" });
+    expect(result).toEqual({
+      writable: true,
+      sid: WINDOWS_SID,
+      securityDescriptor: WINDOWS_SECURITY_DESCRIPTOR,
+    });
     expect(adapter.calls[0]?.args.join(" ")).toContain("Directory]::CreateDirectory");
     expect(adapter.calls[0]?.args.join(" ")).not.toContain("SetAccessControl");
     expect(adapter.calls[0]?.args.join(" ")).toContain("SetAccessRuleProtection($true, $false)");
@@ -224,7 +254,7 @@ describe("native Windows ownership probe", () => {
       { status: "spawn-failed", message: "ENOENT" },
       exited("not-json"),
       exited(`"${"x".repeat(70_000)}"`),
-      exited('{"current_sid":"S-1-5-21-100","owner_sid":"S-1-5-21-200"}'),
+      exited(ownershipPayload("S-1-5-21-200")),
     );
 
     expectOwnershipFailure(

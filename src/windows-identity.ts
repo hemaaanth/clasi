@@ -6,7 +6,8 @@ export const WINDOWS_OWNERSHIP_SCRIPT = [
   "$current = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value",
   "$acl = [System.IO.Directory]::GetAccessControl($env:CLASI_ROOT_CHECK)",
   "$owner = $acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value",
-  "@{ current_sid = $current; owner_sid = $owner } | ConvertTo-Json -Compress",
+  "$descriptor = $acl.GetSecurityDescriptorSddlForm([System.Security.AccessControl.AccessControlSections]::Owner -bor [System.Security.AccessControl.AccessControlSections]::Access)",
+  "@{ current_sid = $current; owner_sid = $owner; security_descriptor = $descriptor } | ConvertTo-Json -Compress",
 ].join("; ");
 
 const WINDOWS_CREATE_PRIVATE_ROOT_SCRIPT = [
@@ -24,7 +25,8 @@ const WINDOWS_CREATE_PRIVATE_ROOT_SCRIPT = [
   "foreach ($access in $actual.Access) { if ($access.IsInherited) { $hasInheritedRule = $true } }",
   "if ($hasInheritedRule) { throw 'Inherited access rule detected' }",
   "$owner = $actual.GetOwner([System.Security.Principal.SecurityIdentifier]).Value",
-  "@{ current_sid = $current.Value; owner_sid = $owner } | ConvertTo-Json -Compress",
+  "$descriptor = $actual.GetSecurityDescriptorSddlForm([System.Security.AccessControl.AccessControlSections]::Owner -bor [System.Security.AccessControl.AccessControlSections]::Access)",
+  "@{ current_sid = $current.Value; owner_sid = $owner; security_descriptor = $descriptor } | ConvertTo-Json -Compress",
 ].join("; ");
 
 export type WindowsOwnershipReasonCode =
@@ -33,7 +35,7 @@ export type WindowsOwnershipReasonCode =
   | "owner-mismatch";
 
 export type WindowsOwnershipResult =
-  | { writable: true; sid: string }
+  | { writable: true; sid: string; securityDescriptor: string }
   | { writable: false; code: WindowsOwnershipReasonCode };
 
 export interface WindowsOwnershipOptions {
@@ -83,15 +85,42 @@ async function runOwnershipScript(
   if (result.value.current_sid !== result.value.owner_sid) {
     return { writable: false, code: "owner-mismatch" };
   }
-  return { writable: true, sid: result.value.current_sid };
+  return {
+    writable: true,
+    sid: result.value.current_sid,
+    securityDescriptor: result.value.security_descriptor,
+  };
 }
 
-function isOwnershipPayload(value: unknown): value is { current_sid: string; owner_sid: string } {
+function isOwnershipPayload(
+  value: unknown,
+): value is { current_sid: string; owner_sid: string; security_descriptor: string } {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const keys = Object.keys(value).sort();
-  if (keys.length !== 2 || keys[0] !== "current_sid" || keys[1] !== "owner_sid") return false;
-  if (!("current_sid" in value) || !("owner_sid" in value)) return false;
-  return isSid(value.current_sid) && isSid(value.owner_sid);
+  if (
+    keys.length !== 3 ||
+    keys[0] !== "current_sid" ||
+    keys[1] !== "owner_sid" ||
+    keys[2] !== "security_descriptor"
+  ) return false;
+  if (!("current_sid" in value) || !("owner_sid" in value) || !("security_descriptor" in value)) {
+    return false;
+  }
+  return (
+    isSid(value.current_sid) &&
+    isSid(value.owner_sid) &&
+    isSecurityDescriptor(value.security_descriptor)
+  );
+}
+
+function isSecurityDescriptor(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length >= 3 &&
+    value.length <= 2_048 &&
+    value.startsWith("O:") &&
+    !/[\u0000-\u001f\u007f]/.test(value)
+  );
 }
 
 function isSid(value: unknown): value is string {

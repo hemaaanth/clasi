@@ -40,7 +40,6 @@ export interface RootPin {
   readonly owner: string;
   readonly platform: NodeJS.Platform;
   readonly privateMode: number;
-  readonly metadataChangeTimeMs: number;
 }
 
 export interface SafePathOptions {
@@ -54,6 +53,15 @@ export interface RootSafetyOptions {
   platform?: NodeJS.Platform;
   windowsOwnership?: WindowsOwnershipOptions;
 }
+
+interface WindowsRootState {
+  metadataChangeTimeMs: number;
+  securityDescriptor: string;
+  ownershipOptions: WindowsOwnershipOptions | undefined;
+}
+
+const windowsRootStates = new WeakMap<RootPin, WindowsRootState>();
+
 export async function createPrivateRoot(path: string): Promise<void> {
   if (!isAbsolute(path)) throw new RootSafetyError("path-escape");
   await assertNoSymlinkComponents(path);
@@ -97,20 +105,26 @@ export async function pinRoot(path: string, options: RootSafetyOptions = {}): Pr
   const stats = await safeLstat(absolute);
   if (!stats.isDirectory()) throw new RootSafetyError("wrong-kind");
   assertPrivateOwnership(stats.uid, stats.mode, platform);
-  const owner = platform === "win32"
-    ? await readWindowsOwner(absolute, options.windowsOwnership)
-    : String(stats.uid);
-
-  return {
+  const windowsSecurity = platform === "win32"
+    ? await readWindowsSecurity(absolute, options.windowsOwnership)
+    : undefined;
+  const pin: RootPin = {
     path: absolute,
     realPath: await realpath(absolute),
     device: BigInt(stats.dev),
     inode: BigInt(stats.ino),
-    owner,
+    owner: windowsSecurity?.sid ?? String(stats.uid),
     platform,
     privateMode: stats.mode & 0o777,
-    metadataChangeTimeMs: stats.ctimeMs,
   };
+  if (windowsSecurity) {
+    windowsRootStates.set(pin, {
+      metadataChangeTimeMs: stats.ctimeMs,
+      securityDescriptor: windowsSecurity.securityDescriptor,
+      ownershipOptions: options.windowsOwnership,
+    });
+  }
+  return pin;
 }
 
 export async function assertRootUnchanged(pin: RootPin): Promise<void> {
@@ -126,9 +140,18 @@ export async function assertRootUnchanged(pin: RootPin): Promise<void> {
     throw new RootSafetyError("root-replaced");
   }
   if (pin.platform === "win32") {
-    if (stats.ctimeMs !== pin.metadataChangeTimeMs) {
+    const previous = windowsRootStates.get(pin);
+    if (previous?.metadataChangeTimeMs === stats.ctimeMs) return;
+    const current = await readWindowsSecurity(pin.path, previous?.ownershipOptions);
+    if (current.sid !== pin.owner) throw new RootSafetyError("owner-mismatch");
+    if (previous && current.securityDescriptor !== previous.securityDescriptor) {
       throw new RootSafetyError("permissions-changed");
     }
+    windowsRootStates.set(pin, {
+      metadataChangeTimeMs: stats.ctimeMs,
+      securityDescriptor: current.securityDescriptor,
+      ownershipOptions: previous?.ownershipOptions,
+    });
     return;
   }
   if (String(stats.uid) !== pin.owner) throw new RootSafetyError("owner-mismatch");
@@ -283,12 +306,14 @@ function assertPrivateOwnership(uid: number, mode: number, platform: NodeJS.Plat
   if ((mode & 0o077) !== 0) throw new RootSafetyError("permissions-changed");
 }
 
-async function readWindowsOwner(
+async function readWindowsSecurity(
   path: string,
   options: WindowsOwnershipOptions | undefined,
-): Promise<string> {
+): Promise<{ sid: string; securityDescriptor: string }> {
   const result = await probeWindowsRootOwnership(path, options);
-  if (result.writable) return result.sid;
+  if (result.writable) {
+    return { sid: result.sid, securityDescriptor: result.securityDescriptor };
+  }
   throw new RootSafetyError(result.code);
 }
 
