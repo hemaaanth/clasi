@@ -94,6 +94,7 @@ export async function runOmpSmoke(
   let completed: CompletedChecks | undefined;
   let stub: OpenAIStub | undefined;
   let gitTransport: GitHttpTransport | undefined;
+  let stage = "initialize";
 
   try {
     assertIsolatedRoots(roots);
@@ -117,6 +118,7 @@ export async function runOmpSmoke(
     const matrixRow = resolveMatrixRow(ompVersion, process.env.CLASI_OMP_MATRIX_ROW);
     const architecture = requireArchitecture(process.arch);
     const platform = await detectEvidencePlatform();
+    stage = "package";
 
     const packageRoot = join(roots.work, "package");
     assertPathInsideRoot(roots.root, packageRoot);
@@ -137,6 +139,7 @@ export async function runOmpSmoke(
     const paths = expectedInstallPaths(roots, packageRoot);
     for (const path of Object.values(paths)) assertPathInsideRoot(roots.root, path);
 
+    stage = "setup";
     await checked(adapter, {
       command: bunExecutable,
       args: [join(packageRoot, "bin", "clasi.ts"), "setup", "--root", roots.clasiHome, "--confirm"],
@@ -156,10 +159,12 @@ export async function runOmpSmoke(
     await writeFile(preservationFile, "preserved\n", { flag: "wx", mode: 0o600 });
     const preservationBytes = await readFile(preservationFile);
 
+    stage = "boundaries";
     await runLosslessReplacementCheck(roots);
     await runLockContentionCheck(roots);
     runPathNormalizationCheck(roots);
     const windowsSidAcl = await runWindowsBoundaryCheck(roots);
+    stage = "plugin-link";
 
     await checked(adapter, {
       command: ompExecutable,
@@ -178,6 +183,7 @@ export async function runOmpSmoke(
       env: environment,
     });
     let packageDiagnostics = inspectDoctorOutput(doctor.stdout, manifest);
+    stage = "model";
 
     stub = (dependencies.startStub ?? startOpenAIStub)();
     await writeModelsConfiguration(paths.models, stub.baseUrl);
@@ -209,6 +215,7 @@ export async function runOmpSmoke(
     await unlink(paths.linkedPackage);
     await assertMissing(paths.linkedPackage);
 
+    stage = "plugin-install";
     gitTransport = startDumbGitTransport(bareRepository, commit);
     if (publicGitSpec !== undefined) {
       await checked(adapter, {
@@ -229,6 +236,7 @@ export async function runOmpSmoke(
       });
       packageDiagnostics = inspectDoctorOutput(installedDoctor.stdout, manifest);
     }
+    stage = "global-cli";
     await checked(adapter, {
       command: bunExecutable,
       args: [
@@ -268,6 +276,7 @@ export async function runOmpSmoke(
       env: cleanEnvironment,
     });
     assertClasiStatus(globalStatus.stdout, roots.clasiHome);
+    stage = "uninstall";
 
     for (const path of [paths.plugins, paths.pluginManifest, paths.pluginLock, paths.linkedPackage]) {
       assertPathInsideRoot(roots.root, path);
@@ -302,6 +311,8 @@ export async function runOmpSmoke(
       windowsSidAcl,
       publicInstall: publicGitSpec !== undefined,
     };
+  } catch {
+    throw new IsolationError(`smoke-${stage}-failed`);
   } finally {
     if (stub !== undefined) {
       stub.clear();
