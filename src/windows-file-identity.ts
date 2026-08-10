@@ -21,6 +21,10 @@ const kernel32 = dlopen("kernel32.dll", {
     args: ["ptr", "i32", "ptr", "u32"],
     returns: "bool",
   },
+  GetLastError: {
+    args: [],
+    returns: "u32",
+  },
   GetFileSizeEx: {
     args: ["ptr", "ptr"],
     returns: "bool",
@@ -115,7 +119,7 @@ function openPath(path: string, desiredAccess: number): Pointer {
     FILE_FLAG_OPEN_REPARSE_POINT,
     null,
   );
-  if (!validHandle(handle)) throw new Error("windows-file-open-failed");
+  if (!validHandle(handle)) throw windowsFileError(kernel32.symbols.GetLastError());
   return handle;
 }
 
@@ -159,6 +163,13 @@ function readHandleSize(handle: Pointer): number {
     throw new Error("windows-file-too-large");
   }
   return Number(size);
+}
+
+function windowsFileError(nativeCode: number): Error & { code?: string } {
+  const error = new Error("windows-file-open-failed") as Error & { code?: string };
+  if (nativeCode === 2 || nativeCode === 3) error.code = "ENOENT";
+  if (nativeCode === 5) error.code = "EACCES";
+  return error;
 }
 
 function validHandle(handle: Pointer | null): handle is Pointer {
