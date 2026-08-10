@@ -212,7 +212,7 @@ No platform or model gate is claimed until its evidence file exists from the act
 
 | Gate | Status |
 | --- | --- |
-| WSL platform | Pending actual platform evidence |
+| WSL platform | Passed on WSL x64 with OMP 17.2.4 and 17.2.12 through pinned public Git installs |
 | macOS platform | Pending actual platform evidence |
 | Native Windows platform | Pending actual platform evidence |
 | Release-model capture evaluation | Passed 10/10 with `openai-codex/gpt-5.4`; aggregate evidence generated |

@@ -219,7 +219,7 @@ export async function runOmpSmoke(
         timeoutMs: INSTALL_TIMEOUT_MS,
       });
       const gitInstalledPlugin = await lstat(paths.linkedPackage);
-      assert(gitInstalledPlugin.isSymbolicLink());
+      assert(gitInstalledPlugin.isDirectory());
       assertPathInsideRoot(roots.root, await realpath(paths.linkedPackage));
       const installedDoctor = await checked(adapter, {
         command: ompExecutable,

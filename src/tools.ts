@@ -3,7 +3,6 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@oh-my-pi/pi-coding-agent";
-import type { ZodRawShape } from "zod/v4";
 import { SAFE_SOURCE_CLASSIFICATIONS } from "./privacy.ts";
 import { NAPKIN_CATEGORIES } from "./schema.ts";
 import type { ClasiRuntime } from "./runtime-types.ts";
@@ -63,30 +62,23 @@ export function registerClasiTools(pi: ExtensionAPI, runtime: ClasiToolRuntime):
   const boundedText = z.string().min(1).max(240).regex(/^[^\r\n]+$/);
   const logicalKey = z.string().min(1).max(80).regex(LOGICAL_KEY_PATTERN);
   const sourceClassification = z.enum(SAFE_SOURCE_CLASSIFICATIONS);
-  const scoped = <Shape extends ZodRawShape>(shape: Shape) =>
-    z.strictObject({
+  const scoped = (shape: Parameters<typeof z.object>[0]) =>
+    z.object({
       scope: z.enum(SCOPE_TYPES),
       scopeId: z.string().regex(SCOPE_ID_PATTERN).optional(),
       ...shape,
-    }).superRefine((value, context) => {
+    }).strict().refine((value) => {
       const scopedValue = value as {
         scope: (typeof SCOPE_TYPES)[number];
         scopeId?: string;
       };
       const scopeId = scopedValue.scopeId;
-      const valid = scopedValue.scope === "global"
+      return scopedValue.scope === "global"
         ? scopeId === undefined
         : scopedValue.scope === "machine"
         ? scopeId?.startsWith("machine_") === true
         : scopeId?.startsWith("repo_") === true;
-      if (!valid) {
-        context.addIssue({
-          code: "custom",
-          path: ["scopeId"],
-          message: "scopeId must match scope",
-        });
-      }
-    });
+    }, { message: "scopeId must match scope" });
 
   const specifications = [
     {

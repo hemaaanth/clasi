@@ -560,7 +560,7 @@ U3 and U4 may proceed independently after U2. All later units depend on their sh
 - **Verification:** `bun test test/repair.test.ts test/github.test.ts`.
 
 ### U9. Prove package installation, platform behavior, and public readiness
-- **Status (2026-08-09):** Implementation and local gates complete. Isolated host/OMP/link/loopback/global-Git smoke passes on WSL, and the actual release model scored 10/10. The fail-closed public release gate remains blocked: this checkout has no public Git remote/spec, so the real OMP Git-install gate cannot emit WSL evidence, and actual macOS plus native Windows evidence has not run.
+- **Status (2026-08-09):** Implementation, local gates, and public WSL proof complete. Pinned installs from `github:hemaaanth/clasi` pass on WSL x64 with minimum OMP 17.2.4 and latest OMP 17.2.12, and the actual release model scored 10/10. The fail-closed release gate remains blocked only on actual macOS and native Windows evidence.
 
 - **Goal:** Demonstrate that clasi installs and behaves as specified on OMP without hidden local assumptions.
 - **Requirements:** R4, R20, R31-R48 and AE1-AE14

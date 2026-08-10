@@ -7,3 +7,4 @@
 - Added private-root validation, strict content schemas, privacy checks, immutable revisions, lossless canonical replacement, conflict review, lock recovery, and retained transaction cleanup.
 - Added explicit GitHub issue publication and resumable repair dispatch through optional Paseo or Pi follow-up adapters.
 - Added isolated host and OMP smoke harnesses, focused concurrency and privacy gates, model evaluation, and fail-closed release evidence validation.
+- Verified public Git installation on WSL against minimum and latest supported OMP 17.x releases.

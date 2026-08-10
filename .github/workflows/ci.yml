@@ -53,7 +53,7 @@ jobs:
           CLASI_OMP_MATRIX_ROW: minimum
 
       - name: Install latest OMP 17.x
-        run: bun add --no-save "@oh-my-pi/pi-coding-agent@17"
+        run: bun update --no-save "@oh-my-pi/pi-coding-agent@17"
 
       - name: Typecheck with latest OMP 17.x
         run: bun run typecheck
