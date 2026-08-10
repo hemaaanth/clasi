@@ -1,5 +1,6 @@
 import type { JsonCommandOptions, JsonCommandResult, ProcessAdapter } from "./exec.ts";
 import { runJsonCommand } from "./exec.ts";
+import { spawn } from "node:child_process";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -162,11 +163,12 @@ async function runDefaultOwnershipCommand(
     `try { $result = & { ${script} }; $text = [string]$result; $key = [Convert]::FromBase64String($env:CLASI_OWNERSHIP_KEY); $hmac = New-Object System.Security.Cryptography.HMACSHA256; try { $hmac.Key = $key; $signature = [Convert]::ToBase64String($hmac.ComputeHash($encoding.GetBytes($text))) } finally { $hmac.Dispose() }; [System.IO.File]::WriteAllText($env:CLASI_OWNERSHIP_RESULT, $text, $encoding); [System.IO.File]::WriteAllText($env:CLASI_OWNERSHIP_COMPLETE, "ok:$signature", $encoding) }`,
     "catch { $name = $_.Exception.GetType().Name; if ($name -eq 'UnauthorizedAccessException') { $kind = 'access' } elseif ($name -eq 'MethodException' -or $name -eq 'MethodInvocationException') { $kind = 'method' } elseif ($name -eq 'PlatformNotSupportedException') { $kind = 'platform' } elseif ($name -eq 'RuntimeException') { $kind = 'runtime' } else { $kind = 'other' }; [System.IO.File]::WriteAllText($env:CLASI_OWNERSHIP_COMPLETE, \"error:$kind\", $encoding) }",
   ].join("\n");
-  let child: Bun.Subprocess | undefined;
+  let child: ReturnType<typeof spawn> | undefined;
   try {
     await writeFile(scriptPath, wrappedScript, { encoding: "utf8", mode: 0o600 });
-    child = Bun.spawn(
-      [command, "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath],
+    child = spawn(
+      command,
+      ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath],
       {
         env: {
           ...env,
@@ -174,9 +176,7 @@ async function runDefaultOwnershipCommand(
           CLASI_OWNERSHIP_COMPLETE: completionPath,
           CLASI_OWNERSHIP_KEY: authenticationKey.toString("base64"),
         },
-        stdin: "ignore",
-        stdout: "ignore",
-        stderr: "ignore",
+        stdio: "ignore",
         windowsHide: true,
       },
     );
