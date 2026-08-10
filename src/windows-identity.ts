@@ -1,7 +1,7 @@
 import type { JsonCommandOptions, JsonCommandResult, ProcessAdapter } from "./exec.ts";
 import { runJsonCommand } from "./exec.ts";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, win32 } from "node:path";
 
@@ -155,6 +155,7 @@ async function runDefaultOwnershipCommand(
   const captureRoot = await mkdtemp(join(outputRoot, "clasi-ownership-"));
   const resultPath = join(captureRoot, "result");
   const completionPath = join(captureRoot, "complete");
+  const scriptPath = join(captureRoot, "probe.ps1");
   const authenticationKey = randomBytes(32);
   const wrappedScript = [
     "$encoding = New-Object System.Text.UTF8Encoding($false)",
@@ -162,9 +163,9 @@ async function runDefaultOwnershipCommand(
     "catch { $name = $_.Exception.GetType().Name; if ($name -eq 'UnauthorizedAccessException') { $kind = 'access' } elseif ($name -eq 'MethodException' -or $name -eq 'MethodInvocationException') { $kind = 'method' } elseif ($name -eq 'PlatformNotSupportedException') { $kind = 'platform' } elseif ($name -eq 'RuntimeException') { $kind = 'runtime' } else { $kind = 'other' }; [System.IO.File]::WriteAllText($env:CLASI_OWNERSHIP_COMPLETE, \"error:$kind\", $encoding) }",
   ].join("\n");
   try {
-    const encodedScript = Buffer.from(wrappedScript, "utf16le").toString("base64");
+    await writeFile(scriptPath, wrappedScript, { encoding: "utf8", mode: 0o600 });
     const invocation = Bun.spawnSync(
-      [command, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodedScript],
+      [command, "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath],
       {
         env: {
           ...env,
