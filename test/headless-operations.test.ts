@@ -93,6 +93,25 @@ describe("headless operation backend", () => {
     expect(runtimeCalls).toBe(0);
   });
 
+  test("bootstrap command failures stay inside the safe backend envelope", async () => {
+    const result = await execute(
+      { command: "setup", root: "/safe", confirm: true },
+      {
+        setup: async () => {
+          throw Object.assign(
+            new Error("token=secret /home/alice/customer"),
+            { code: "permission-denied" },
+          );
+        },
+      },
+    );
+    expect(result).toMatchObject({
+      exitCode: 1,
+      envelope: { code: "permission-denied", data: {} },
+    });
+    expect(JSON.stringify(result)).not.toMatch(/secret|alice|customer|token|\/home\//);
+  });
+
   test("runtime setup and degraded gates never construct services", async () => {
     let services = 0;
     const factory = () => { services += 1; throw new Error("must not run"); };

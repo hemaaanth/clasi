@@ -16,6 +16,7 @@ import type {
 import { ConflictService } from "./conflict-service.ts";
 import { CoordinationService } from "./coordination-service.ts";
 import { ConfigService } from "./config-service.ts";
+import { resolveClasiAgentRoot } from "./config.ts";
 import { ContextService } from "./context-service.ts";
 import { getHeadlessDoctor } from "./doctor.ts";
 import { detectCurrentMachineFacts } from "./machine.ts";
@@ -68,6 +69,7 @@ import { scanExcludedData } from "./privacy.ts";
 import { getHeadlessConfig, getHeadlessStatus } from "./status.ts";
 
 const MAX_UI_TEXT = 600;
+const MAX_SETUP_SUMMARY_TEXT = 1_200;
 const MAX_OPTION_TEXT = 180;
 const SAFE_CODE = /^[a-z][a-z0-9-]{0,79}$/;
 
@@ -310,21 +312,60 @@ async function openReadyView(
 async function setupFlow(context: ExtensionContext, workflow: InteractiveSetupWorkflow): Promise<void> {
   try {
     const machineFacts = await workflow.detectMachineFacts();
-    const globalPreference = await context.ui.input(
-      "Global coding default",
-      "Optional preference; leave blank to skip",
+    context.ui.notify(
+      `Detected automatically: ${machineFactSummary(machineFacts)}. Recommended defaults require no typing; custom setup has three optional steps.`,
+      "info",
     );
-    if (globalPreference === undefined) return;
-    const machinePreference = await context.ui.input(
-      "Machine-specific preference",
-      "Optional preference; leave blank to skip",
-    );
-    if (machinePreference === undefined) return;
-    const instructionPath = await context.ui.input(
-      "Instruction file",
-      "Optional file path; leave blank to skip",
-    );
-    if (instructionPath === undefined) return;
+    const setupMode = await choose(context, "Set up clasi", [
+      "Use recommended defaults — no typing required",
+      "Customize 3 optional preferences",
+      "Cancel",
+    ]);
+    if (setupMode === undefined || setupMode === "Cancel") return;
+
+    let globalPreference: string | undefined;
+    let machinePreference: string | undefined;
+    let instructionPath: string | undefined;
+    if (setupMode === "Customize 3 optional preferences") {
+      const globalChoice = await choose(context, "Step 1 of 3 · Global preference", [
+        "Skip — clasi can learn this later",
+        "Add a preference for every repository",
+      ]);
+      if (globalChoice === undefined) return;
+      if (globalChoice === "Add a preference for every repository") {
+        globalPreference = await context.ui.input(
+          "Global preference",
+          "Example: Prefer concise explanations and minimal changes",
+        );
+        if (globalPreference === undefined) return;
+      }
+
+      const machineChoice = await choose(context, "Step 2 of 3 · Machine preference", [
+        "Use detected machine facts only",
+        "Add a machine-specific preference",
+      ]);
+      if (machineChoice === undefined) return;
+      if (machineChoice === "Add a machine-specific preference") {
+        machinePreference = await context.ui.input(
+          "Machine-specific preference",
+          "Example: Use WSL paths when commands cross into Windows",
+        );
+        if (machinePreference === undefined) return;
+      }
+
+      const instructionChoice = await choose(context, "Step 3 of 3 · Instruction import", [
+        "Skip — no instruction file",
+        "Import an instruction file for review",
+      ]);
+      if (instructionChoice === undefined) return;
+      if (instructionChoice === "Import an instruction file for review") {
+        instructionPath = await context.ui.input(
+          "Instruction file",
+          "Absolute path to a Markdown instruction file",
+        );
+        if (instructionPath === undefined) return;
+      }
+    }
 
     const plan = await workflow.prepare({
       machineFacts,
@@ -332,17 +373,14 @@ async function setupFlow(context: ExtensionContext, workflow: InteractiveSetupWo
       ...(nonempty(machinePreference) ? { machinePreference: machinePreference.trim() } : {}),
       ...(nonempty(instructionPath) ? { instructionPath: instructionPath.trim() } : {}),
     });
-    const confirmed = await context.ui.confirm("Commit clasi setup", setupSummary(plan));
+    const confirmed = await context.ui.confirm("Finish clasi setup", setupSummary(plan));
     if (!confirmed) return;
     const result = await workflow.commit(plan);
     if (result.status === "cancelled") {
       context.ui.notify("Setup was not committed.", "info");
       return;
     }
-    context.ui.notify(
-      `Setup committed: ${result.activatedMachineFacts} machine facts, ${result.activatedPreferences} preferences, ${result.stagedImports} imports staged.`,
-      "info",
-    );
+    context.ui.notify("clasi is ready. Run /clasi to review what it remembers.", "info");
   } catch (error) {
     context.ui.notify(`Setup is unavailable (${reasonFrom(error, "setup-failed")}).`, "error");
   }
@@ -1049,20 +1087,34 @@ function scopeLabel(scope: ScopeRef): string {
 }
 
 function setupSummary(plan: SetupPlan): string {
-  const lines = [
-    `Machine facts: ${machineFactCount(plan.machineFacts)}`,
-    `Global preference: ${plan.globalPreference ? "1" : "0"}`,
-    `Machine preference: ${plan.machinePreference ? "1" : "0"}`,
-    `Instruction imports staged: ${plan.imports.length}`,
-    `Instruction imports skipped: ${plan.skippedImports.length}`,
-    "Configuration will be written last.",
-  ];
-  return clip(lines.join("\n"));
+  const instructionImport = plan.imports.length > 0
+    ? "Ready for review"
+    : plan.skippedImports.length > 0
+      ? "Skipped by safety checks"
+      : "None";
+  return clip([
+    `Detected automatically: ${machineFactSummary(plan.machineFacts)}`,
+    `Global preference: ${plan.globalPreference?.value ?? "None"}`,
+    `Machine preference: ${plan.machinePreference?.value ?? "None"}`,
+    `Instruction import: ${instructionImport}`,
+    "Nothing is written until you finish setup.",
+  ].join("\n"), MAX_SETUP_SUMMARY_TEXT);
 }
 
-function machineFactCount(facts: MachineFacts): number {
-  return Object.values(facts).filter(value => value !== undefined && (!Array.isArray(value) || value.length > 0)).length;
+function machineFactSummary(facts: MachineFacts): string {
+  return [
+    facts.osBoundary ? `OS ${facts.osBoundary}` : undefined,
+    facts.architecture ? `Architecture ${facts.architecture}` : undefined,
+    `WSL ${facts.wsl.toUpperCase()}`,
+    `Container ${facts.container ? "yes" : "no"}`,
+    facts.shell ? `Shell ${facts.shell.basename} (${facts.shell.family})` : undefined,
+    facts.toolManagers.length > 0 ? `Package managers ${facts.toolManagers.join(", ")}` : undefined,
+    facts.filesystemConvention ? `Filesystem ${facts.filesystemConvention}` : undefined,
+    facts.cpuBucket ? `CPU ${facts.cpuBucket}` : undefined,
+    facts.memoryBucket ? `Memory ${facts.memoryBucket}` : undefined,
+  ].filter((value): value is string => value !== undefined).join(" · ");
 }
+
 
 interface CapturedMigration {
   locator: RepositoryLocator;
@@ -1258,11 +1310,11 @@ function createDefaultServices(environment: RuntimeEnvironmentReady): ClasiComma
 
 function createDefaultSetup(_cwd: string): InteractiveSetupWorkflow {
   const home = process.env.HOME ?? process.env.USERPROFILE;
-  const agentRoot = process.env.PI_CODING_AGENT_DIR;
   return {
     detectMachineFacts: detectCurrentMachineFacts,
     prepare: async answers => {
-      if (!nonempty(home) || !nonempty(agentRoot)) throw new Error("invalid-environment");
+      if (!nonempty(home)) throw new Error("invalid-environment");
+      const agentRoot = resolveClasiAgentRoot();
       const roots = {
         controlRoot: join(agentRoot, "clasi"),
         dataRoot: process.env.CLASI_HOME ?? join(agentRoot, "clasi", "data"),

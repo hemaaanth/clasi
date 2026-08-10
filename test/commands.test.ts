@@ -256,8 +256,59 @@ describe("interactive clasi command", () => {
     expect(unavailableUi.selects[0]?.options[0]).toBe("1. Recovery");
   });
 
-  test("setup stages one global preference, one machine preference, and one optional import before one final commit", async () => {
+  test("recommended setup detects the machine and needs only one final confirmation", async () => {
     const ui = new FakeUi({
+      selections: ["Use recommended defaults — no typing required"],
+      confirms: [true],
+    });
+    let prepared: InteractiveSetupAnswers | undefined;
+    const plan = setupPlan({});
+    const workflow: InteractiveSetupWorkflow = {
+      detectMachineFacts: async () => FACTS,
+      prepare: async answers => {
+        prepared = answers;
+        return plan;
+      },
+      commit: async () => ({
+        status: "committed",
+        machineId: opaque("machine", 2),
+        activatedMachineFacts: 7,
+        activatedPreferences: 0,
+        stagedImports: 0,
+        skippedImports: [],
+      }),
+    };
+
+    await runClasiCommand("setup", commandContext(ui), { createSetup: () => workflow });
+
+    expect(ui.selects[0]).toEqual({
+      title: "Set up clasi",
+      options: [
+        "1. Use recommended defaults — no typing required",
+        "2. Customize 3 optional preferences",
+        "3. Cancel",
+      ],
+      initialIndex: 0,
+    });
+    expect(ui.notifications[0]?.message).toContain(
+      "Recommended defaults require no typing; custom setup has three optional steps.",
+    );
+    expect(ui.inputs).toHaveLength(0);
+    expect(prepared).toEqual({ machineFacts: FACTS });
+    expect(ui.confirms[0]?.message).toContain(
+      "Detected automatically: OS linux · Architecture x64 · WSL WSL2 · Container no",
+    );
+    expect(ui.notifications.at(-1)?.message).toBe("clasi is ready. Run /clasi to review what it remembers.");
+  });
+
+  test("custom setup explains and gates each optional freeform value", async () => {
+    const ui = new FakeUi({
+      selections: [
+        "Customize 3 optional preferences",
+        "Add a preference for every repository",
+        "Add a machine-specific preference",
+        "Import an instruction file for review",
+      ],
       inputs: ["Prefer Bun for package scripts", "Use WSL-aware commands", "/safe/instructions.txt"],
       confirms: [true],
     });
@@ -282,9 +333,31 @@ describe("interactive clasi command", () => {
         };
       },
     };
+
     await runClasiCommand("setup", commandContext(ui), { createSetup: () => workflow });
+
+    expect(ui.selects.map(select => select.title)).toEqual([
+      "Set up clasi",
+      "Step 1 of 3 · Global preference",
+      "Step 2 of 3 · Machine preference",
+      "Step 3 of 3 · Instruction import",
+    ]);
+    expect(ui.selects.slice(1).map(select => select.options)).toEqual([
+      [
+        "1. Skip — clasi can learn this later",
+        "2. Add a preference for every repository",
+      ],
+      [
+        "1. Use detected machine facts only",
+        "2. Add a machine-specific preference",
+      ],
+      [
+        "1. Skip — no instruction file",
+        "2. Import an instruction file for review",
+      ],
+    ]);
     expect(ui.inputs.map(input => input.title)).toEqual([
-      "Global coding default", "Machine-specific preference", "Instruction file",
+      "Global preference", "Machine-specific preference", "Instruction file",
     ]);
     expect(prepared).toEqual({
       machineFacts: FACTS,
@@ -293,13 +366,43 @@ describe("interactive clasi command", () => {
       instructionPath: "/safe/instructions.txt",
     });
     expect(ui.confirms).toHaveLength(1);
-    expect(ui.confirms[0]?.message).toContain("Instruction imports staged: 1");
-    expect(ui.confirms[0]?.message).toContain("Configuration will be written last.");
+    expect(ui.confirms[0]?.message).toContain("Instruction import: Ready for review");
     expect(committed).toBe(plan);
-    expect(ui.notifications.at(-1)?.message).toContain("Setup committed: 7 machine facts, 2 preferences, 1 imports staged.");
   });
 
-  test("setup cancellation at input or final confirmation performs no commit", async () => {
+  test("setup confirmation keeps every stored machine fact and bounded preference visible", async () => {
+    const globalPreference = "g".repeat(240);
+    const machinePreference = "m".repeat(240);
+    const plan: SetupPlan = {
+      ...setupPlan({}),
+      globalPreference: { logicalKey: "coding-default", value: globalPreference, approved: true },
+      machinePreference: { logicalKey: "machine-preference", value: machinePreference, approved: true },
+    };
+    const ui = new FakeUi({
+      selections: ["Use recommended defaults — no typing required"],
+      confirms: [false],
+    });
+    const workflow: InteractiveSetupWorkflow = {
+      detectMachineFacts: async () => FACTS,
+      prepare: async () => plan,
+      commit: async () => {
+        throw new Error("commit should not run");
+      },
+    };
+
+    await runClasiCommand("setup", commandContext(ui), { createSetup: () => workflow });
+
+    const summary = ui.confirms[0]?.message ?? "";
+    expect(summary).toContain(globalPreference);
+    expect(summary).toContain(machinePreference);
+    expect(summary).toContain("Container no");
+    expect(summary).toContain("Filesystem posix");
+    expect(summary).toContain("CPU 5-8");
+    expect(summary).toContain("Instruction import: None");
+    expect(summary).toContain("Nothing is written until you finish setup.");
+  });
+
+  test("setup cancellation at the first choice or final confirmation performs no commit", async () => {
     let prepares = 0;
     let commits = 0;
     const workflow: InteractiveSetupWorkflow = {
@@ -313,12 +416,15 @@ describe("interactive clasi command", () => {
         return { status: "cancelled" };
       },
     };
-    const escaped = new FakeUi({ inputs: [undefined] });
+    const escaped = new FakeUi();
     await runClasiCommand("setup", commandContext(escaped), { createSetup: () => workflow });
     expect(prepares).toBe(0);
     expect(commits).toBe(0);
 
-    const cancelled = new FakeUi({ inputs: ["", "", ""], confirms: [false] });
+    const cancelled = new FakeUi({
+      selections: ["Use recommended defaults — no typing required"],
+      confirms: [false],
+    });
     await runClasiCommand("setup", commandContext(cancelled), { createSetup: () => workflow });
     expect(prepares).toBe(1);
     expect(commits).toBe(0);

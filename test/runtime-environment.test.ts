@@ -291,6 +291,23 @@ describe("resolveRuntimeEnvironment", () => {
     });
   });
 
+  test("uses the canonical agent root when PI_CODING_AGENT_DIR is unset", async () => {
+    await withRuntimeFixture(async fixture => {
+      const env = { ...fixture.env };
+      delete env.PI_CODING_AGENT_DIR;
+
+      const environment = requireReady(await resolveRuntimeEnvironment("/work/unknown", {
+        env,
+        gitIdentity: notRepository,
+      }));
+
+      expect(environment.roots).toEqual({
+        controlRoot: fixture.controlRoot,
+        dataRoot: fixture.dataRoot,
+      });
+    });
+  });
+
   test("Git unavailability degrades only the optional repository capability", async () => {
     await withRuntimeFixture(async fixture => {
       const environment = requireReady(await resolveRuntimeEnvironment("/work/unknown", {
@@ -311,7 +328,7 @@ describe("resolveRuntimeEnvironment", () => {
 async function withRuntimeFixture(run: (fixture: RuntimeFixture) => Promise<void>): Promise<void> {
   const temporary = await realpath(await mkdtemp(join(tmpdir(), "clasi-runtime-environment-")));
   const home = join(temporary, "home");
-  const agentRoot = join(temporary, "agent");
+  const agentRoot = join(home, ".omp", "agent");
   const controlRoot = join(agentRoot, "clasi");
   const dataRoot = join(temporary, "data");
   try {

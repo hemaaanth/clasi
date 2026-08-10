@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { createHmac } from "node:crypto";
 import {
   chmod,
   mkdir,
@@ -11,7 +12,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, normalize } from "node:path";
-import { resolveClasiRoots } from "../src/config.ts";
+import { resolveClasiAgentRoot, resolveClasiRoots } from "../src/config.ts";
 import { createClasiPaths, resolveWithin } from "../src/paths.ts";
 import {
   RootSafetyError,
@@ -25,6 +26,7 @@ import {
 import type { RootSafetyReasonCode } from "../src/root-safety.ts";
 import {
   createWindowsPrivateRoot,
+  verifyOwnershipSignature,
   WINDOWS_OWNERSHIP_SCRIPT,
   probeWindowsRootOwnership,
 } from "../src/windows-identity.ts";
@@ -60,6 +62,11 @@ describe("two-root path layout", () => {
       },
       config: { dataRoot: "${HOME}/Synced/clasi" },
     });
+    expect(resolveClasiAgentRoot({
+      HOME: home,
+      PI_CODING_AGENT_DIR: agentDirectory,
+      OMP_PROFILE: "ignored-profile",
+    })).toBe(agentDirectory);
     const paths = createClasiPaths(roots);
 
     expect(roots).toEqual({
@@ -73,6 +80,28 @@ describe("two-root path layout", () => {
     expect(paths.lock(opaque("doc", 1))).toBe(
       join(agentDirectory, "clasi", "locks", opaque("doc", 1)),
     );
+  });
+
+  test("defaults to OMP's configured agent directory when no explicit override exists", () => {
+    const home = join(tmpdir(), "home", "tester");
+    expect(resolveClasiRoots({
+      env: {
+        HOME: home,
+        PI_CONFIG_DIR: ".custom-omp",
+        CLASI_HOME: join(home, "clasi-data"),
+      },
+    }).controlRoot).toBe(join(home, ".custom-omp", "agent", "clasi"));
+  });
+
+  test("uses the active OMP profile when resolving the default agent directory", () => {
+    const home = join(tmpdir(), "home", "tester");
+    expect(resolveClasiRoots({
+      env: {
+        HOME: home,
+        OMP_PROFILE: "work",
+        CLASI_HOME: join(home, "clasi-data"),
+      },
+    }).controlRoot).toBe(join(home, ".omp", "profiles", "work", "agent", "clasi"));
   });
 
   test("CLASI_HOME wins and no data root falls back to a worktree", () => {
@@ -217,7 +246,7 @@ describe("native Windows ownership probe", () => {
       sid: WINDOWS_SID,
       securityDescriptor: WINDOWS_SECURITY_DESCRIPTOR,
     });
-    expect(adapter.calls[0]?.command).toBe("powershell.exe");
+    expect(adapter.calls[0]?.command).toBe("pwsh.exe");
     expect(adapter.calls[0]?.args).toEqual([
       "-NoProfile",
       "-NonInteractive",
@@ -230,6 +259,7 @@ describe("native Windows ownership probe", () => {
       CLASI_ROOT_CHECK: hostileRoot,
     });
     expect(WINDOWS_OWNERSHIP_SCRIPT).toContain("[System.IO.Directory]::GetAccessControl(");
+    expect(WINDOWS_OWNERSHIP_SCRIPT).toContain("[System.IO.FileSystemAclExtensions]::GetAccessControl(");
     expect(WINDOWS_OWNERSHIP_SCRIPT).not.toContain("Get-Acl");
   });
 
@@ -246,6 +276,7 @@ describe("native Windows ownership probe", () => {
       securityDescriptor: WINDOWS_SECURITY_DESCRIPTOR,
     });
     expect(adapter.calls[0]?.args.join(" ")).toContain("Directory]::CreateDirectory");
+    expect(adapter.calls[0]?.args.join(" ")).toContain("FileSystemAclExtensions]::CreateDirectory");
     expect(adapter.calls[0]?.args.join(" ")).not.toContain("SetAccessControl");
     expect(adapter.calls[0]?.args.join(" ")).toContain("SetAccessRuleProtection($true, $false)");
     expect(adapter.calls[0]?.args.join(" ")).toContain("$access.IsInherited");
@@ -254,6 +285,7 @@ describe("native Windows ownership probe", () => {
 
   test("fails closed for missing, malformed, oversized, and mismatched probes", async () => {
     const adapter = new FakeProcessAdapter(
+      { status: "spawn-failed", message: "ENOENT" },
       { status: "spawn-failed", message: "ENOENT" },
       exited("not-json"),
       exited(`"${"x".repeat(70_000)}"`),
@@ -264,9 +296,13 @@ describe("native Windows ownership probe", () => {
       await probeWindowsRootOwnership("C:\\safe", { adapter: adapter.run }),
       "powershell-unavailable",
     );
+    expect(adapter.calls.slice(0, 2).map(call => call.command)).toEqual([
+      "pwsh.exe",
+      "powershell.exe",
+    ]);
     expectOwnershipFailure(
       await probeWindowsRootOwnership("C:\\safe", { adapter: adapter.run }),
-      "ownership-probe-invalid",
+      "ownership-probe-malformed",
     );
     expectOwnershipFailure(
       await probeWindowsRootOwnership("C:\\safe", { adapter: adapter.run }),
@@ -276,6 +312,30 @@ describe("native Windows ownership probe", () => {
       await probeWindowsRootOwnership("C:\\safe", { adapter: adapter.run }),
       "owner-mismatch",
     );
+  });
+
+  test("falls back when process spawning fails asynchronously", async () => {
+    await withTempDirectory(async temporary => {
+      expectOwnershipFailure(
+        await probeWindowsRootOwnership("C:\\safe", {
+          env: { PATH: "", TEMP: temporary },
+        }),
+        "powershell-unavailable",
+      );
+    });
+  });
+
+  test("rejects forged ownership result files", () => {
+    const key = Buffer.alloc(32, 7);
+    const result = Buffer.from(ownershipPayload());
+    const signature = createHmac("sha256", key).update(result).digest("base64");
+
+    expect(verifyOwnershipSignature(result, `ok:${signature}`, key)).toBeTrue();
+    expect(
+      verifyOwnershipSignature(Buffer.from(ownershipPayload("S-1-5-21-200")), `ok:${signature}`, key),
+    ).toBeFalse();
+    expect(verifyOwnershipSignature(result, `ok:${signature}`, Buffer.alloc(32, 8))).toBeFalse();
+    expect(verifyOwnershipSignature(result, "ok:not-a-signature", key)).toBeFalse();
   });
 });
 

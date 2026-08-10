@@ -10,6 +10,8 @@ import {
   cleanupIsolatedRoots,
   createIsolatedRoots,
   runCheckedProcess,
+  spawnProcess,
+  spawnProcessFileBacked,
 } from "../scripts/isolation.ts";
 import type { IsolatedRoots, ProcessAdapter } from "../scripts/isolation.ts";
 import {
@@ -44,7 +46,7 @@ describe("public smoke scripts", () => {
     });
   });
 
-  test("isolates roots and refuses unissued cleanup targets", async () => {
+  test("isolates roots, leaves the data root for secure setup, and refuses unissued cleanup", async () => {
     const parent = await mkdtemp(join(tmpdir(), "clasi-smoke-test-parent-"));
     try {
       const roots = await createIsolatedRoots({ parent, prefix: "case-" });
@@ -52,6 +54,7 @@ describe("public smoke scripts", () => {
         expect(assertPathInsideRoot(roots.root, roots.environment[key]))
           .toBe(resolve(roots.environment[key]));
       }
+      await expect(access(roots.clasiHome)).rejects.toThrow();
       expect(() => assertPathInsideRoot(roots.root, resolve(roots.root, "..", "outside")))
         .toThrow(new IsolationError("path-escape"));
       const outside = join(parent, "must-survive");
@@ -97,6 +100,42 @@ describe("public smoke scripts", () => {
       stdout: "",
       stderr: "private failure text",
     }), { ...request, maxOutputBytes: 64 })).rejects.toEqual(new IsolationError("process-failed"));
+  });
+
+  test("supervises a real child process and maps spawn failures", async () => {
+    expect(await spawnProcess({
+      command: process.execPath,
+      args: ["-e", "process.stdout.write('ok')"],
+      cwd: resolve("."),
+      timeoutMs: 5_000,
+      maxOutputBytes: 16,
+    })).toEqual({ exitCode: 0, stdout: "ok", stderr: "" });
+    await expect(spawnProcess({
+      command: "clasi-definitely-missing-executable",
+      args: [],
+      cwd: resolve("."),
+      timeoutMs: 5_000,
+      maxOutputBytes: 16,
+    })).rejects.toEqual(new IsolationError("process-spawn-failed"));
+  });
+
+  test("captures terminal launcher output without pipe-backed stdio", async () => {
+    expect(await spawnProcessFileBacked({
+      command: process.execPath,
+      args: ["-e", "process.stdout.write('captured')"],
+      cwd: resolve("."),
+      env: { TMP: tmpdir() },
+      timeoutMs: 5_000,
+      maxOutputBytes: 16,
+    })).toEqual({ exitCode: 0, stdout: "captured", stderr: "" });
+    await expect(spawnProcessFileBacked({
+      command: process.execPath,
+      args: ["-e", "process.stdout.write('x'.repeat(17))"],
+      cwd: resolve("."),
+      env: { TMP: tmpdir() },
+      timeoutMs: 5_000,
+      maxOutputBytes: 16,
+    })).rejects.toEqual(new IsolationError("process-output-limit"));
   });
 
   test("accepts exact clasi diagnostics without retaining raw text", () => {

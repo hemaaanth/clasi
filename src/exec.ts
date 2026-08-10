@@ -1,4 +1,7 @@
 import { spawn } from "node:child_process";
+import { mkdir, mkdtemp, open, readFile, rm, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { isAbsolute, join } from "node:path";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 65_536;
@@ -158,6 +161,66 @@ export const runProcess: ProcessAdapter = invocation => {
   }, invocation.timeoutMs);
 
   return promise;
+};
+
+export const runProcessFileBacked: ProcessAdapter = async invocation => {
+  const outputRoot = invocation.env?.TEMP ?? invocation.env?.TMP ?? tmpdir();
+  if (!isAbsolute(outputRoot)) {
+    return { status: "spawn-failed", message: "Temporary directory is not absolute" };
+  }
+  await mkdir(outputRoot, { recursive: true, mode: 0o700 });
+  const captureRoot = await mkdtemp(join(outputRoot, "clasi-process-"));
+  const stdoutPath = join(captureRoot, "stdout");
+  const stderrPath = join(captureRoot, "stderr");
+  const [stdoutHandle, stderrHandle] = await Promise.all([
+    open(stdoutPath, "wx", 0o600),
+    open(stderrPath, "wx", 0o600),
+  ]);
+  try {
+    const child = Bun.spawn([invocation.command, ...invocation.args], {
+      ...(invocation.cwd === undefined ? {} : { cwd: invocation.cwd }),
+      ...(invocation.env === undefined ? {} : { env: invocation.env }),
+      stdin: "ignore",
+      stdout: stdoutHandle.fd,
+      stderr: stderrHandle.fd,
+    });
+    await Promise.all([stdoutHandle.close(), stderrHandle.close()]);
+    let timer: NodeJS.Timeout | undefined;
+    const result = await Promise.race<ProcessResult>([
+      child.exited.then(exitCode => ({
+        status: "exited",
+        exitCode,
+        stdout: new Uint8Array(),
+        stderr: new Uint8Array(),
+      })),
+      new Promise<ProcessResult>(resolveTimeout => {
+        timer = setTimeout(() => {
+          child.kill();
+          resolveTimeout({ status: "timed-out" });
+        }, invocation.timeoutMs);
+      }),
+    ]);
+    clearTimeout(timer);
+    child.unref();
+    if (result.status !== "exited") return result;
+    const [stdoutStats, stderrStats] = await Promise.all([stat(stdoutPath), stat(stderrPath)]);
+    if (stdoutStats.size + stderrStats.size > invocation.maxOutputBytes) {
+      return { status: "output-too-large" };
+    }
+    const [stdout, stderr] = await Promise.all([readFile(stdoutPath), readFile(stderrPath)]);
+    return { ...result, stdout, stderr };
+  } catch (error) {
+    return {
+      status: "spawn-failed",
+      message: error instanceof Error ? error.message : "Process failed to start",
+    };
+  } finally {
+    await Promise.all([
+      stdoutHandle.close().catch(() => undefined),
+      stderrHandle.close().catch(() => undefined),
+    ]);
+    await rm(captureRoot, { recursive: true, force: true });
+  }
 };
 
 function failure(code: Exclude<JsonCommandResult, { ok: true }>["code"], message: string) {

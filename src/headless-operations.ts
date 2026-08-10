@@ -82,12 +82,12 @@ export async function executeHeadlessRequest(
   try {
     if (request.command === "help") return headlessOk("help", "Available clasi commands.", { commands: [...HELP_COMMANDS] });
     if (request.command === "version") return headlessOk("version", "clasi version.", { version: CLASI_VERSION });
-    if (request.command === "status") return (options.status ?? getHeadlessStatus)(cwd);
+    if (request.command === "status") return await (options.status ?? getHeadlessStatus)(cwd);
     if (request.command === "config" && !("action" in request)) {
-      return (options.config ?? getHeadlessConfig)(cwd);
+      return await (options.config ?? getHeadlessConfig)(cwd);
     }
-    if (request.command === "doctor") return (options.doctor ?? getHeadlessDoctor)(cwd);
-    if (request.command === "setup") return (options.setup ?? executeSetup)(request);
+    if (request.command === "doctor") return await (options.doctor ?? getHeadlessDoctor)(cwd);
+    if (request.command === "setup") return await (options.setup ?? executeSetup)(request);
     const environment = await (options.runtime ?? resolveRuntimeEnvironment)(cwd);
     if (environment.status === "setup-needed") return headlessSetupNeeded("setup-needed", "clasi setup is required.", {}, ["Run clasi setup."]);
     if (environment.status === "degraded") {
@@ -148,9 +148,8 @@ export async function executeHeadlessRequest(
 
 async function executeSetup(request: Extract<HeadlessRequest, { command: "setup" }>): Promise<HeadlessResponse> {
   const home = process.env.HOME ?? process.env.USERPROFILE;
-  const agentRoot = process.env.PI_CODING_AGENT_DIR;
-  if (!home || !agentRoot) return headlessError("invalid-environment", "Required local environment is unavailable.", {}, []);
-  const roots = resolveClasiRoots({ env: { ...process.env, HOME: home, PI_CODING_AGENT_DIR: agentRoot, CLASI_HOME: request.root } });
+  if (!home) return headlessError("invalid-environment", "Required local environment is unavailable.", {}, []);
+  const roots = resolveClasiRoots({ env: { ...process.env, CLASI_HOME: request.root } });
   const result = await commitSetup(await prepareSetup({ roots, home, machineFacts: await detectCurrentMachineFacts() }), { confirm: request.confirm });
   if (result.status !== "committed") return headlessChoiceRequired("confirmation-required", "Setup requires confirmation.", {}, []);
   return headlessOk("setup-complete", "clasi setup completed.", {

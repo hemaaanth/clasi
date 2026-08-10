@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { access, cp, link, lstat, mkdir, readFile, readdir, realpath, rename, unlink, writeFile } from "node:fs/promises";
+import { access, cp, link, lstat, mkdir, readFile, readdir, realpath, rename, rm, unlink, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { acquireDocumentLock, LockError } from "../src/lock.ts";
-import { assertRootUnchanged, pinRoot } from "../src/root-safety.ts";
+import { RootSafetyError, assertRootUnchanged, pinRoot } from "../src/root-safety.ts";
+import { probeWindowsRootOwnership } from "../src/windows-identity.ts";
 import {
   CLASI_VERSION,
   EVIDENCE_SCHEMA_VERSION,
@@ -22,12 +23,13 @@ import {
   resolveExecutable,
   runCheckedProcess,
   spawnProcess,
+  spawnProcessFileBacked,
 } from "./isolation.ts";
 import type { IsolatedRoots, ProcessAdapter, ProcessRequest } from "./isolation.ts";
 
 const SOURCE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const MAX_JSON_BYTES = 1_048_576;
-const PROCESS_TIMEOUT_MS = 45_000;
+const PROCESS_TIMEOUT_MS = 120_000;
 const INSTALL_TIMEOUT_MS = 120_000;
 const SMOKE_PROVIDER = "clasi-smoke";
 const SMOKE_MODEL = "smoke-model";
@@ -82,7 +84,10 @@ export async function runOmpSmoke(
   const adapter = dependencies.process ?? spawnProcess;
   const sourceRoot = resolve(dependencies.sourceRoot ?? SOURCE_ROOT);
   const now = dependencies.now ?? (() => new Date());
-  const roots = await createIsolatedRoots();
+  const localAppData = process.platform === "win32" ? process.env.LOCALAPPDATA : undefined;
+  const roots = await createIsolatedRoots(
+    localAppData === undefined ? {} : { parent: join(localAppData, "Temp") },
+  );
   const environment = await createSmokeEnvironment(roots);
   const publicGitSpec = process.env.CLASI_PUBLIC_GIT_SPEC;
   if (
@@ -136,33 +141,37 @@ export async function runOmpSmoke(
       environment,
     );
 
+
     const paths = expectedInstallPaths(roots, packageRoot);
     for (const path of Object.values(paths)) assertPathInsideRoot(roots.root, path);
 
     stage = "setup";
-    await checked(adapter, {
+    await runCheckedClasiSetup(adapter, {
       command: bunExecutable,
       args: [join(packageRoot, "bin", "clasi.ts"), "setup", "--root", roots.clasiHome, "--confirm"],
       cwd: packageRoot,
       env: environment,
     });
-    const packageLocalStatus = await checked(adapter, {
+    const packageLocalStatus = await runCheckedClasiStatus(adapter, {
       command: bunExecutable,
       args: [join(packageRoot, "bin", "clasi.ts"), "status"],
       cwd: packageRoot,
       env: environment,
     });
-    assertClasiStatus(packageLocalStatus.stdout, roots.clasiHome);
+    assertClasiStatus(packageLocalStatus, roots.clasiHome);
 
     const preservationFile = join(roots.clasiHome, "uninstall-preservation-check");
     assertPathInsideRoot(roots.root, preservationFile);
     await writeFile(preservationFile, "preserved\n", { flag: "wx", mode: 0o600 });
     const preservationBytes = await readFile(preservationFile);
 
-    stage = "boundaries";
+    stage = "lossless-replacement";
     await runLosslessReplacementCheck(roots);
+    stage = "lock-contention";
     await runLockContentionCheck(roots);
+    stage = "path-normalization";
     runPathNormalizationCheck(roots);
+    stage = "windows-boundary";
     const windowsSidAcl = await runWindowsBoundaryCheck(roots);
     stage = "plugin-link";
 
@@ -255,42 +264,63 @@ export async function runOmpSmoke(
     gitTransport.stop();
     gitTransport = undefined;
     stage = "global-bin";
-    const bunBinOutput = await checked(adapter, {
-      command: bunExecutable,
-      args: ["pm", "bin", "--global"],
-      cwd: packageRoot,
-      env: environment,
-    });
-    const globalBin = parseAbsoluteSingleLine(bunBinOutput.stdout);
+    const globalBin = join(roots.bunInstall, "bin");
     const runtimeDirectories = [dirname(bunExecutable), globalBin];
     if (process.platform === "win32") {
-      const powershell = join(
-        process.env.SystemRoot ?? "C:\\Windows",
-        "System32",
-        "WindowsPowerShell",
-        "v1.0",
-        "powershell.exe",
-      );
+      try {
+        runtimeDirectories.push(dirname(await resolveExecutable("pwsh.exe", environment)));
+      } catch (error) {
+        if (!(error instanceof IsolationError) || error.code !== "executable-not-found") throw error;
+      }
+      const system32 = join(process.env.SystemRoot ?? "C:\\Windows", "System32");
+      const powershell = join(system32, "WindowsPowerShell", "v1.0", "powershell.exe");
       await access(powershell);
-      runtimeDirectories.push(dirname(powershell));
+      runtimeDirectories.push(system32, dirname(powershell));
     }
     assertPathInsideRoot(roots.root, globalBin);
     const cleanEnvironment = {
       ...environment,
       PATH: cleanPath(runtimeDirectories),
     };
+    if (process.platform === "win32") {
+      stage = "windows-ownership";
+      const ownership = await probeWindowsRootOwnership(roots.clasiHome, { env: cleanEnvironment });
+      if (!ownership.writable) throw new IsolationError(`ownership-${ownership.code}`);
+    }
     const installedBin = await resolveExecutable("clasi", cleanEnvironment);
     assertPathInsideRoot(roots.root, installedBin);
     assertPathInsideRoot(roots.root, await realpath(installedBin));
-    stage = "global-status";
-    const globalStatus = await checked(adapter, {
-      command: "clasi",
-      args: ["status"],
+    const installedSource = join(
+      roots.bunInstall,
+      "install",
+      "global",
+      "node_modules",
+      "clasi",
+      "bin",
+      "clasi.ts",
+    );
+    assertPathInsideRoot(roots.root, installedSource);
+    await access(installedSource);
+    stage = "global-source-status";
+    const globalSourceStatus = await runCheckedClasiStatus(spawnProcessFileBacked, {
+      command: bunExecutable,
+      args: [installedSource, "status"],
       cwd: packageRoot,
       env: cleanEnvironment,
     });
+    assertClasiStatus(globalSourceStatus, roots.clasiHome);
+    stage = "global-status";
+    const globalStatus = await runCheckedClasiStatus(
+      dependencies.process ?? spawnProcessFileBacked,
+      {
+        command: installedBin,
+        args: ["status"],
+        cwd: packageRoot,
+        env: cleanEnvironment,
+      },
+    );
     stage = "global-status-output";
-    assertClasiStatus(globalStatus.stdout, roots.clasiHome);
+    assertClasiStatus(globalStatus, roots.clasiHome);
     stage = "uninstall";
 
     for (const path of [paths.plugins, paths.pluginManifest, paths.pluginLock, paths.linkedPackage]) {
@@ -326,8 +356,15 @@ export async function runOmpSmoke(
       windowsSidAcl,
       publicInstall: publicGitSpec !== undefined,
     };
-  } catch {
-    throw new IsolationError(`smoke-${stage}-failed`);
+  } catch (error) {
+    const failedStage = error instanceof IsolationError
+      ? /^setup-[a-z][a-z0-9-]{0,63}$/.test(error.code)
+        ? error.code
+        : `${stage}-${error.code}`
+      : error instanceof RootSafetyError
+        ? `${stage}-${error.code}`
+        : stage;
+    throw new IsolationError(`smoke-${failedStage}-failed`);
   } finally {
     if (stub !== undefined) {
       stub.clear();
@@ -545,7 +582,7 @@ async function createSmokeEnvironment(roots: IsolatedRoots): Promise<Record<stri
     NO_PROXY: "127.0.0.1,localhost,::1",
     no_proxy: "127.0.0.1,localhost,::1",
   };
-  for (const key of ["SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT"] as const) {
+  for (const key of ["SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "ProgramFiles"] as const) {
     const value = process.env[key];
     if (value !== undefined) environment[key] = value;
   }
@@ -798,6 +835,61 @@ async function writeModelsConfiguration(path: string, baseUrl: string): Promise<
   ].join("\n"), { flag: "wx", mode: 0o600 });
 }
 
+async function runCheckedClasiSetup(
+  adapter: ProcessAdapter,
+  request: ProcessRequest,
+): Promise<void> {
+  const checkedRequest = {
+    timeoutMs: PROCESS_TIMEOUT_MS,
+    maxOutputBytes: MAX_JSON_BYTES,
+    ...request,
+  };
+  const result = await adapter(checkedRequest);
+  try {
+    await runCheckedProcess(async () => result, checkedRequest);
+  } catch (error) {
+    if (!(error instanceof IsolationError) || error.code !== "process-failed") throw error;
+    const value = parseJson(result.stdout, "clasi-setup-response-invalid");
+    if (
+      !isRecord(value) ||
+      value.schema_version !== 1 ||
+      typeof value.code !== "string" ||
+      !/^[a-z][a-z0-9-]{0,63}$/.test(value.code)
+    ) {
+      throw new IsolationError("clasi-setup-response-invalid");
+    }
+    throw new IsolationError(`setup-${value.code}`);
+  }
+}
+
+async function runCheckedClasiStatus(
+  adapter: ProcessAdapter,
+  request: ProcessRequest,
+): Promise<string> {
+  const checkedRequest = {
+    timeoutMs: PROCESS_TIMEOUT_MS,
+    maxOutputBytes: MAX_JSON_BYTES,
+    ...request,
+  };
+  const result = await adapter(checkedRequest);
+  try {
+    await runCheckedProcess(async () => result, checkedRequest);
+  } catch (error) {
+    if (!(error instanceof IsolationError) || error.code !== "process-failed") throw error;
+    const value = parseJson(result.stdout, "clasi-status-response-invalid");
+    if (
+      !isRecord(value) ||
+      value.schema_version !== 1 ||
+      typeof value.code !== "string" ||
+      !/^[a-z][a-z0-9-]{0,63}$/.test(value.code)
+    ) {
+      throw new IsolationError("clasi-status-response-invalid");
+    }
+    throw new IsolationError(`status-${value.code}`);
+  }
+  return result.stdout;
+}
+
 function assertClasiStatus(stdout: string, dataRoot: string): void {
   const value = parseJson(stdout, "clasi-status-invalid");
   if (
@@ -866,9 +958,9 @@ function runPathNormalizationCheck(roots: IsolatedRoots): void {
 async function runWindowsBoundaryCheck(
   roots: IsolatedRoots,
 ): Promise<"passed" | "not_applicable"> {
-  if (process.platform !== "win32") return "not_applicable";
-  const pin = await pinRoot(roots.root);
+  const pin = await pinRoot(roots.clasiHome);
   await assertRootUnchanged(pin);
+  if (process.platform !== "win32") return "not_applicable";
   return "passed";
 }
 
@@ -901,13 +993,6 @@ function parseBunVersion(stdout: string): string {
   return value;
 }
 
-function parseAbsoluteSingleLine(stdout: string): string {
-  const lines = stdout.trim().split(/\r?\n/);
-  if (lines.length !== 1 || !lines[0] || !isAbsolute(lines[0])) {
-    throw new IsolationError("global-bin-invalid");
-  }
-  return resolve(lines[0]);
-}
 
 async function assertMissing(path: string): Promise<void> {
   try {

@@ -5,7 +5,7 @@ import registerClasi, {
   createClasiRuntime,
 } from "../src/index.ts";
 import { runClasiCli } from "../src/cli.ts";
-import { runJsonCommand } from "../src/exec.ts";
+import { runJsonCommand, runProcessFileBacked } from "../src/exec.ts";
 import type { JsonCommandResult } from "../src/exec.ts";
 import { CLASI_VERSION } from "../src/runtime-types.ts";
 import { CLASI_TOOL_NAMES } from "../src/tools.ts";
@@ -169,6 +169,30 @@ describe("bounded JSON process execution", () => {
       await runJsonCommand("loud", [], { adapter: adapter.run, maxOutputBytes: 32 }),
       "output-too-large",
     );
+  });
+
+  test("runs bounded file-backed subprocesses", async () => {
+    expect(await runProcessFileBacked({
+      command: process.execPath,
+      args: ["-e", "process.stdout.write('ok')"],
+      cwd: undefined,
+      env: process.env,
+      timeoutMs: 2_000,
+      maxOutputBytes: 16,
+    })).toEqual({
+      status: "exited",
+      exitCode: 0,
+      stdout: Buffer.from("ok"),
+      stderr: Buffer.alloc(0),
+    });
+    expect(await runProcessFileBacked({
+      command: process.execPath,
+      args: ["-e", "process.stdout.write('oversized')"],
+      cwd: undefined,
+      env: process.env,
+      timeoutMs: 2_000,
+      maxOutputBytes: 4,
+    })).toEqual({ status: "output-too-large" });
   });
 });
 
