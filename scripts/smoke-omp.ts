@@ -144,7 +144,9 @@ export async function runOmpSmoke(
     if (process.platform === "win32") {
       stage = "windows-private-root";
       const privateRoot = join(roots.root, "private-root-probe");
-      const ownership = await createWindowsPrivateRoot(privateRoot, { env: environment });
+      const ownership = await createWindowsPrivateRoot(privateRoot, {
+        env: { ...environment, CLASI_DEBUG_CHECK: "1" },
+      });
       if (!ownership.writable) throw new IsolationError(`ownership-${ownership.code}`);
       await rm(privateRoot, { recursive: true, force: true });
     }

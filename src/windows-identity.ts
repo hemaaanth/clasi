@@ -21,13 +21,20 @@ export const WINDOWS_OWNERSHIP_SCRIPT = [
 const WINDOWS_CREATE_PRIVATE_ROOT_SCRIPT = [
   "$ErrorActionPreference = 'Stop'",
   "$current = [System.Security.Principal.WindowsIdentity]::GetCurrent().User",
+  "[System.IO.File]::WriteAllText($env:CLASI_OWNERSHIP_COMPLETE, 'step:identity')",
   "$security = New-Object System.Security.AccessControl.DirectorySecurity",
+  "[System.IO.File]::WriteAllText($env:CLASI_OWNERSHIP_COMPLETE, 'step:security')",
   "$security.SetAccessRuleProtection($true, $false)",
+  "[System.IO.File]::WriteAllText($env:CLASI_OWNERSHIP_COMPLETE, 'step:protection')",
   "$security.SetOwner($current)",
+  "[System.IO.File]::WriteAllText($env:CLASI_OWNERSHIP_COMPLETE, 'step:owner')",
   "$inheritance = [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [System.Security.AccessControl.InheritanceFlags]::ObjectInherit",
   "$rule = New-Object System.Security.AccessControl.FileSystemAccessRule($current, [System.Security.AccessControl.FileSystemRights]::FullControl, $inheritance, [System.Security.AccessControl.PropagationFlags]::None, [System.Security.AccessControl.AccessControlType]::Allow)",
+  "[System.IO.File]::WriteAllText($env:CLASI_OWNERSHIP_COMPLETE, 'step:rule')",
   "$security.AddAccessRule($rule)",
+  "[System.IO.File]::WriteAllText($env:CLASI_OWNERSHIP_COMPLETE, 'step:access')",
   "if ($PSVersionTable.PSEdition -eq 'Core') { $created = [System.IO.FileSystemAclExtensions]::CreateDirectory($security, $env:CLASI_ROOT_CHECK); $actual = [System.IO.FileSystemAclExtensions]::GetAccessControl($created) } else { $created = [System.IO.Directory]::CreateDirectory($env:CLASI_ROOT_CHECK, $security); $actual = $created.GetAccessControl() }",
+  "[System.IO.File]::WriteAllText($env:CLASI_OWNERSHIP_COMPLETE, 'step:create')",
   "$hasInheritedRule = $false",
   "foreach ($access in $actual.Access) { if ($access.IsInherited) { $hasInheritedRule = $true } }",
   "if ($hasInheritedRule) { throw 'Inherited access rule detected' }",
@@ -186,14 +193,17 @@ async function runDefaultOwnershipCommand(
     let completion: string | undefined;
     while (Date.now() < deadline) {
       completion = await readFile(completionPath, "utf8").catch(() => undefined);
-      if (completion !== undefined && completion !== "started") break;
+      if (completion?.startsWith("ok:") || completion?.startsWith("error:")) break;
       await Bun.sleep(25);
     }
-    if (completion === undefined || completion === "started") {
+    if (completion === undefined || (!completion.startsWith("ok:") && !completion.startsWith("error:"))) {
+      if (env.CLASI_DEBUG_CHECK === "1") {
+        console.error(`clasi ownership probe stalled: ${completion ?? "not-started"}`);
+      }
       return {
         ok: false,
         code: "timeout",
-        message: completion === "started" ? "runtime" : "Ownership probe timed out",
+        message: completion === undefined ? "Ownership probe timed out" : "runtime",
       };
     }
     
