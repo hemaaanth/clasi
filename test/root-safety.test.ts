@@ -100,22 +100,19 @@ describe("root safety", () => {
     });
   });
 
-  test("pins and rechecks native Windows root ownership", async () => {
+  test("pins native Windows ownership and rejects root metadata drift", async () => {
     await withTempDirectory(async temporary => {
       const root = join(temporary, "root");
       await createPrivateRoot(root);
       const adapter = new FakeProcessAdapter(
         exited('{"current_sid":"S-1-5-21-100","owner_sid":"S-1-5-21-100"}'),
-        exited('{"current_sid":"S-1-5-21-100","owner_sid":"S-1-5-21-200"}'),
       );
       const windows = { adapter: adapter.run, env: { PATH: "C:\\Windows\\System32" } };
 
       const pin = await pinRoot(root, { platform: "win32", windowsOwnership: windows });
+      await chmod(root, 0o755);
 
-      await expectSafetyFailure(
-        assertRootUnchanged(pin, { windowsOwnership: windows }),
-        "owner-mismatch",
-      );
+      await expectSafetyFailure(assertRootUnchanged(pin), "permissions-changed");
     });
   });
 

@@ -40,6 +40,7 @@ export interface RootPin {
   readonly owner: string;
   readonly platform: NodeJS.Platform;
   readonly privateMode: number;
+  readonly metadataChangeTimeMs: number;
 }
 
 export interface SafePathOptions {
@@ -108,13 +109,11 @@ export async function pinRoot(path: string, options: RootSafetyOptions = {}): Pr
     owner,
     platform,
     privateMode: stats.mode & 0o777,
+    metadataChangeTimeMs: stats.ctimeMs,
   };
 }
 
-export async function assertRootUnchanged(
-  pin: RootPin,
-  options: Pick<RootSafetyOptions, "windowsOwnership"> = {},
-): Promise<void> {
+export async function assertRootUnchanged(pin: RootPin): Promise<void> {
   await assertNoSymlinkComponents(pin.path);
   const stats = await safeLstat(pin.path);
   if (!stats.isDirectory() || stats.isSymbolicLink()) throw new RootSafetyError("root-replaced");
@@ -127,8 +126,9 @@ export async function assertRootUnchanged(
     throw new RootSafetyError("root-replaced");
   }
   if (pin.platform === "win32") {
-    const owner = await readWindowsOwner(pin.path, options.windowsOwnership);
-    if (owner !== pin.owner) throw new RootSafetyError("owner-mismatch");
+    if (stats.ctimeMs !== pin.metadataChangeTimeMs) {
+      throw new RootSafetyError("permissions-changed");
+    }
     return;
   }
   if (String(stats.uid) !== pin.owner) throw new RootSafetyError("owner-mismatch");
