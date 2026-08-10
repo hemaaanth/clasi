@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { createHmac } from "node:crypto";
 import {
   chmod,
   mkdir,
@@ -25,6 +26,7 @@ import {
 import type { RootSafetyReasonCode } from "../src/root-safety.ts";
 import {
   createWindowsPrivateRoot,
+  verifyOwnershipSignature,
   WINDOWS_OWNERSHIP_SCRIPT,
   probeWindowsRootOwnership,
 } from "../src/windows-identity.ts";
@@ -310,6 +312,19 @@ describe("native Windows ownership probe", () => {
       await probeWindowsRootOwnership("C:\\safe", { adapter: adapter.run }),
       "owner-mismatch",
     );
+  });
+
+  test("rejects forged ownership result files", () => {
+    const key = Buffer.alloc(32, 7);
+    const result = Buffer.from(ownershipPayload());
+    const signature = createHmac("sha256", key).update(result).digest("base64");
+
+    expect(verifyOwnershipSignature(result, `ok:${signature}`, key)).toBeTrue();
+    expect(
+      verifyOwnershipSignature(Buffer.from(ownershipPayload("S-1-5-21-200")), `ok:${signature}`, key),
+    ).toBeFalse();
+    expect(verifyOwnershipSignature(result, `ok:${signature}`, Buffer.alloc(32, 8))).toBeFalse();
+    expect(verifyOwnershipSignature(result, "ok:not-a-signature", key)).toBeFalse();
   });
 });
 

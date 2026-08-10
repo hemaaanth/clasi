@@ -1,5 +1,6 @@
 import type { JsonCommandOptions, JsonCommandResult, ProcessAdapter } from "./exec.ts";
 import { runJsonCommand } from "./exec.ts";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
@@ -35,6 +36,10 @@ const WINDOWS_CREATE_PRIVATE_ROOT_SCRIPT = [
 
 export type WindowsOwnershipReasonCode =
   | "powershell-unavailable"
+  | "ownership-probe-access-denied"
+  | "ownership-probe-method-error"
+  | "ownership-probe-platform-error"
+  | "ownership-probe-runtime-error"
   | "ownership-probe-invalid"
   | "owner-mismatch";
 
@@ -80,6 +85,18 @@ async function runOwnershipScript(
       : await runJsonCommand(command, args, commandOptions);
     if (!result.ok) {
       if (result.code === "spawn-failed") continue;
+      if (result.message === "access") {
+        return { writable: false, code: "ownership-probe-access-denied" };
+      }
+      if (result.message === "method") {
+        return { writable: false, code: "ownership-probe-method-error" };
+      }
+      if (result.message === "platform") {
+        return { writable: false, code: "ownership-probe-platform-error" };
+      }
+      if (result.message === "runtime") {
+        return { writable: false, code: "ownership-probe-runtime-error" };
+      }
       return { writable: false, code: "ownership-probe-invalid" };
     }
     if (!isOwnershipPayload(result.value)) {
@@ -111,10 +128,11 @@ async function runDefaultOwnershipCommand(
   const captureRoot = await mkdtemp(join(outputRoot, "clasi-ownership-"));
   const resultPath = join(captureRoot, "result");
   const completionPath = join(captureRoot, "complete");
+  const authenticationKey = randomBytes(32);
   const wrappedScript = [
     "$encoding = New-Object System.Text.UTF8Encoding($false)",
-    `try { $result = & { ${script} }; [System.IO.File]::WriteAllText($env:CLASI_OWNERSHIP_RESULT, [string]$result, $encoding); [System.IO.File]::WriteAllText($env:CLASI_OWNERSHIP_COMPLETE, 'ok', $encoding) }`,
-    "catch { [System.IO.File]::WriteAllText($env:CLASI_OWNERSHIP_COMPLETE, 'error', $encoding) }",
+    `try { $result = & { ${script} }; $text = [string]$result; $key = [Convert]::FromBase64String($env:CLASI_OWNERSHIP_KEY); $hmac = New-Object System.Security.Cryptography.HMACSHA256; try { $hmac.Key = $key; $signature = [Convert]::ToBase64String($hmac.ComputeHash($encoding.GetBytes($text))) } finally { $hmac.Dispose() }; [System.IO.File]::WriteAllText($env:CLASI_OWNERSHIP_RESULT, $text, $encoding); [System.IO.File]::WriteAllText($env:CLASI_OWNERSHIP_COMPLETE, "ok:$signature", $encoding) }`,
+    "catch { $name = $_.Exception.GetType().Name; if ($name -eq 'UnauthorizedAccessException') { $kind = 'access' } elseif ($name -eq 'MethodException' -or $name -eq 'MethodInvocationException') { $kind = 'method' } elseif ($name -eq 'PlatformNotSupportedException') { $kind = 'platform' } elseif ($name -eq 'RuntimeException') { $kind = 'runtime' } else { $kind = 'other' }; [System.IO.File]::WriteAllText($env:CLASI_OWNERSHIP_COMPLETE, \"error:$kind\", $encoding) }",
   ].join("; ");
   let child: Bun.Subprocess | undefined;
   try {
@@ -123,6 +141,7 @@ async function runDefaultOwnershipCommand(
         ...env,
         CLASI_OWNERSHIP_RESULT: resultPath,
         CLASI_OWNERSHIP_COMPLETE: completionPath,
+        CLASI_OWNERSHIP_KEY: authenticationKey.toString("base64"),
       },
       stdin: "ignore",
       stdout: "ignore",
@@ -132,15 +151,23 @@ async function runDefaultOwnershipCommand(
     const deadline = Date.now() + 30_000;
     while (Date.now() < deadline) {
       const completion = await readFile(completionPath, "utf8").catch(() => undefined);
-      if (completion === "error") {
-        return { ok: false, code: "nonzero-exit", message: "Ownership probe failed" };
+      if (completion?.startsWith("error:")) {
+        return {
+          ok: false,
+          code: "nonzero-exit",
+          message: completion.slice("error:".length),
+        };
       }
-      if (completion === "ok") {
+      if (completion?.startsWith("ok:")) {
         const resultStats = await stat(resultPath);
         if (resultStats.size > 4_096) {
           return { ok: false, code: "output-too-large", message: "Ownership probe output is too large" };
         }
-        const text = (await readFile(resultPath, "utf8")).replace(/^\uFEFF/, "").trim();
+        const bytes = await readFile(resultPath);
+        if (!verifyOwnershipSignature(bytes, completion, authenticationKey)) {
+          return { ok: false, code: "nonzero-exit", message: "authentication" };
+        }
+        const text = bytes.toString("utf8").replace(/^\uFEFF/, "").trim();
         try {
           return { ok: true, value: JSON.parse(text) as unknown };
         } catch {
@@ -163,10 +190,28 @@ async function runDefaultOwnershipCommand(
   }
 }
 
+export function verifyOwnershipSignature(
+  bytes: Uint8Array,
+  completion: string,
+  authenticationKey: Uint8Array,
+): boolean {
+  if (
+    authenticationKey.byteLength !== 32 ||
+    !/^ok:[A-Za-z0-9+/]{43}=$/.test(completion)
+  ) return false;
+  const actualSignature = Buffer.from(completion.slice("ok:".length), "base64");
+  const expectedSignature = createHmac("sha256", authenticationKey).update(bytes).digest();
+  return (
+    actualSignature.length === expectedSignature.length &&
+    timingSafeEqual(actualSignature, expectedSignature)
+  );
+}
+
 function isOwnershipPayload(
   value: unknown,
 ): value is { current_sid: string; owner_sid: string; security_descriptor: string } {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+
   const keys = Object.keys(value).sort();
   if (
     keys.length !== 3 ||

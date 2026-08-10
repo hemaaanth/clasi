@@ -23,6 +23,10 @@ export type RootSafetyReasonCode =
   | "permissions-changed"
   | "permission-denied"
   | "powershell-unavailable"
+  | "ownership-probe-access-denied"
+  | "ownership-probe-method-error"
+  | "ownership-probe-platform-error"
+  | "ownership-probe-runtime-error"
   | "ownership-probe-invalid";
 
 export class RootSafetyError extends Error {
