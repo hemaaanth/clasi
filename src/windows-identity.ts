@@ -1,6 +1,5 @@
 import type { JsonCommandOptions, JsonCommandResult, ProcessAdapter } from "./exec.ts";
 import { runJsonCommand } from "./exec.ts";
-import { spawnSync } from "node:child_process";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -159,9 +158,8 @@ async function runDefaultOwnershipCommand(
   ].join("\n");
   try {
     const encodedScript = Buffer.from(wrappedScript, "utf16le").toString("base64");
-    const invocation = spawnSync(
-      command,
-      ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodedScript],
+    const invocation = Bun.spawnSync(
+      [command, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodedScript],
       {
         env: {
           ...env,
@@ -169,16 +167,15 @@ async function runDefaultOwnershipCommand(
           CLASI_OWNERSHIP_COMPLETE: completionPath,
           CLASI_OWNERSHIP_KEY: authenticationKey.toString("base64"),
         },
-        stdio: "ignore",
+        stdin: "ignore",
+        stdout: "ignore",
+        stderr: "ignore",
         timeout: 30_000,
         windowsHide: true,
       },
     );
-    if (invocation.error !== undefined) {
-      const code = (invocation.error as NodeJS.ErrnoException).code;
-      return code === "ETIMEDOUT"
-        ? { ok: false, code: "timeout", message: "Ownership probe timed out" }
-        : { ok: false, code: "spawn-failed", message: "PowerShell failed to start" };
+    if (invocation.exitedDueToTimeout) {
+      return { ok: false, code: "timeout", message: "Ownership probe timed out" };
     }
     const completion = await readFile(completionPath, "utf8").catch(() => undefined);
     if (completion?.startsWith("error:")) {
