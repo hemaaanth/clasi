@@ -246,7 +246,7 @@ describe("native Windows ownership probe", () => {
       sid: WINDOWS_SID,
       securityDescriptor: WINDOWS_SECURITY_DESCRIPTOR,
     });
-    expect(adapter.calls[0]?.command).toBe("pwsh.exe");
+    expect(adapter.calls[0]?.command).toBe("powershell.exe");
     expect(adapter.calls[0]?.args).toEqual([
       "-NoProfile",
       "-NonInteractive",
@@ -297,8 +297,8 @@ describe("native Windows ownership probe", () => {
       "powershell-unavailable",
     );
     expect(adapter.calls.slice(0, 2).map(call => call.command)).toEqual([
-      "pwsh.exe",
       "powershell.exe",
+      "pwsh.exe",
     ]);
     expectOwnershipFailure(
       await probeWindowsRootOwnership("C:\\safe", { adapter: adapter.run }),
