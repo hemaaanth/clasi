@@ -267,6 +267,11 @@ export async function runOmpSmoke(
     const globalBin = parseAbsoluteSingleLine(bunBinOutput.stdout);
     const runtimeDirectories = [dirname(bunExecutable), globalBin];
     if (process.platform === "win32") {
+      try {
+        runtimeDirectories.push(dirname(await resolveExecutable("pwsh.exe", environment)));
+      } catch (error) {
+        if (!(error instanceof IsolationError) || error.code !== "executable-not-found") throw error;
+      }
       const powershell = join(
         process.env.SystemRoot ?? "C:\\Windows",
         "System32",
