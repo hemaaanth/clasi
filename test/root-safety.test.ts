@@ -302,7 +302,7 @@ describe("native Windows ownership probe", () => {
     ]);
     expectOwnershipFailure(
       await probeWindowsRootOwnership("C:\\safe", { adapter: adapter.run }),
-      "ownership-probe-invalid",
+      "ownership-probe-malformed",
     );
     expectOwnershipFailure(
       await probeWindowsRootOwnership("C:\\safe", { adapter: adapter.run }),

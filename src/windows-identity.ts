@@ -36,6 +36,10 @@ const WINDOWS_CREATE_PRIVATE_ROOT_SCRIPT = [
 
 export type WindowsOwnershipReasonCode =
   | "powershell-unavailable"
+  | "ownership-probe-authentication-failed"
+  | "ownership-probe-execution-error"
+  | "ownership-probe-malformed"
+  | "ownership-payload-invalid"
   | "ownership-probe-access-denied"
   | "ownership-probe-method-error"
   | "ownership-probe-platform-error"
@@ -97,10 +101,19 @@ async function runOwnershipScript(
       if (result.message === "runtime") {
         return { writable: false, code: "ownership-probe-runtime-error" };
       }
+      if (result.message === "authentication") {
+        return { writable: false, code: "ownership-probe-authentication-failed" };
+      }
+      if (result.message === "other") {
+        return { writable: false, code: "ownership-probe-execution-error" };
+      }
+      if (result.code === "malformed-json") {
+        return { writable: false, code: "ownership-probe-malformed" };
+      }
       return { writable: false, code: "ownership-probe-invalid" };
     }
     if (!isOwnershipPayload(result.value)) {
-      return { writable: false, code: "ownership-probe-invalid" };
+      return { writable: false, code: "ownership-payload-invalid" };
     }
     if (result.value.current_sid !== result.value.owner_sid) {
       return { writable: false, code: "owner-mismatch" };
