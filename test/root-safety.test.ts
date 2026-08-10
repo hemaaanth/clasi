@@ -202,7 +202,8 @@ describe("native Windows ownership probe", () => {
       PATH: "C:\\Windows\\System32",
       CLASI_ROOT_CHECK: hostileRoot,
     });
-    expect(WINDOWS_OWNERSHIP_SCRIPT).toContain(".Translate(");
+    expect(WINDOWS_OWNERSHIP_SCRIPT).toContain("[System.IO.Directory]::GetAccessControl(");
+    expect(WINDOWS_OWNERSHIP_SCRIPT).not.toContain("Get-Acl");
   });
 
   test("fails closed for missing, malformed, oversized, and mismatched probes", async () => {

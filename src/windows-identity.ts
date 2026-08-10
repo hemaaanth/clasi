@@ -4,8 +4,8 @@ import { runJsonCommand } from "./exec.ts";
 export const WINDOWS_OWNERSHIP_SCRIPT = [
   "$ErrorActionPreference = 'Stop'",
   "$current = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value",
-  "$ownerName = (Get-Acl -LiteralPath $env:CLASI_ROOT_CHECK).Owner",
-  "$owner = (New-Object System.Security.Principal.NTAccount($ownerName)).Translate([System.Security.Principal.SecurityIdentifier]).Value",
+  "$acl = [System.IO.Directory]::GetAccessControl($env:CLASI_ROOT_CHECK)",
+  "$owner = $acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value",
   "@{ current_sid = $current; owner_sid = $owner } | ConvertTo-Json -Compress",
 ].join("; ");
 

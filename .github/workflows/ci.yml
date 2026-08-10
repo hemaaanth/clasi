@@ -37,19 +37,6 @@ jobs:
       - name: Install frozen dependencies
         run: bun install --frozen-lockfile
 
-      - name: Diagnose Windows ownership probe
-        if: runner.os == 'Windows'
-        run: >-
-          bun -e 'import { mkdtemp, realpath, rm } from "node:fs/promises";
-          import { tmpdir } from "node:os";
-          import { join } from "node:path";
-          import { runProcess } from "./src/exec.ts";
-          import { WINDOWS_OWNERSHIP_SCRIPT } from "./src/windows-identity.ts";
-          const root = await realpath(await mkdtemp(join(tmpdir(), "clasi-windows-probe-")));
-          const result = await runProcess({ command: "powershell.exe", args: ["-NoProfile", "-NonInteractive", "-Command", WINDOWS_OWNERSHIP_SCRIPT], cwd: undefined, env: { ...process.env, CLASI_ROOT_CHECK: root }, timeoutMs: 10_000, maxOutputBytes: 4_096 });
-          console.log(result.status === "exited" ? JSON.stringify({ status: result.status, exitCode: result.exitCode, stdout: new TextDecoder().decode(result.stdout), stderr: new TextDecoder().decode(result.stderr) }) : JSON.stringify(result));
-          await rm(root, { recursive: true, force: true });'
-
       - name: Typecheck with OMP 17.2.4
         run: bun run typecheck
 
