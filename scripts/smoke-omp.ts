@@ -146,13 +146,13 @@ export async function runOmpSmoke(
       cwd: packageRoot,
       env: environment,
     });
-    const packageLocalStatus = await checked(adapter, {
+    const packageLocalStatus = await runCheckedClasiStatus(adapter, {
       command: bunExecutable,
       args: [join(packageRoot, "bin", "clasi.ts"), "status"],
       cwd: packageRoot,
       env: environment,
     });
-    assertClasiStatus(packageLocalStatus.stdout, roots.clasiHome);
+    assertClasiStatus(packageLocalStatus, roots.clasiHome);
 
     const preservationFile = join(roots.clasiHome, "uninstall-preservation-check");
     assertPathInsideRoot(roots.root, preservationFile);
@@ -290,15 +290,14 @@ export async function runOmpSmoke(
     const installedBin = await resolveExecutable("clasi", cleanEnvironment);
     assertPathInsideRoot(roots.root, installedBin);
     assertPathInsideRoot(roots.root, await realpath(installedBin));
-    stage = "global-status";
-    const globalStatus = await checked(adapter, {
+    const globalStatus = await runCheckedClasiStatus(adapter, {
       command: installedBin,
       args: ["status"],
       cwd: packageRoot,
       env: cleanEnvironment,
     });
     stage = "global-status-output";
-    assertClasiStatus(globalStatus.stdout, roots.clasiHome);
+    assertClasiStatus(globalStatus, roots.clasiHome);
     stage = "uninstall";
 
     for (const path of [paths.plugins, paths.pluginManifest, paths.pluginLock, paths.linkedPackage]) {
@@ -838,6 +837,34 @@ async function runCheckedClasiSetup(
     }
     throw new IsolationError(`setup-${value.code}`);
   }
+}
+
+async function runCheckedClasiStatus(
+  adapter: ProcessAdapter,
+  request: ProcessRequest,
+): Promise<string> {
+  const checkedRequest = {
+    timeoutMs: PROCESS_TIMEOUT_MS,
+    maxOutputBytes: MAX_JSON_BYTES,
+    ...request,
+  };
+  const result = await adapter(checkedRequest);
+  try {
+    await runCheckedProcess(async () => result, checkedRequest);
+  } catch (error) {
+    if (!(error instanceof IsolationError) || error.code !== "process-failed") throw error;
+    const value = parseJson(result.stdout, "clasi-status-response-invalid");
+    if (
+      !isRecord(value) ||
+      value.schema_version !== 1 ||
+      typeof value.code !== "string" ||
+      !/^[a-z][a-z0-9-]{0,63}$/.test(value.code)
+    ) {
+      throw new IsolationError("clasi-status-response-invalid");
+    }
+    throw new IsolationError(`status-${value.code}`);
+  }
+  return result.stdout;
 }
 
 function assertClasiStatus(stdout: string, dataRoot: string): void {

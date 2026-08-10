@@ -6,6 +6,12 @@ on:
       - main
   pull_request:
   workflow_dispatch:
+    inputs:
+      windows_only:
+        description: Run only the Windows platform smoke job
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -16,6 +22,7 @@ concurrency:
 
 jobs:
   quality:
+    if: github.event_name != 'workflow_dispatch' || !inputs.windows_only
     name: Typecheck and test
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -56,10 +63,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - ubuntu-latest
-          - macos-latest
-          - windows-latest
+        os: ${{ fromJSON(inputs.windows_only && '["windows-latest"]' || '["ubuntu-latest","macos-latest","windows-latest"]') }}
     env:
       CLASI_PUBLIC_GIT_SPEC: "github:${{ github.repository }}#${{ github.sha }}"
 
@@ -104,6 +108,7 @@ jobs:
   aggregate-evidence:
     name: Validate actual CI evidence
     needs: platform
+    if: github.event_name != 'workflow_dispatch' || !inputs.windows_only
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
