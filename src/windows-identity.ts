@@ -174,6 +174,7 @@ async function runDefaultOwnershipCommand(
   ].join("\n");
   let child: ReturnType<typeof spawn> | undefined;
   let completedBySentinel = false;
+  let spawnError: Error | undefined;
   const probeKind = script === WINDOWS_CREATE_PRIVATE_ROOT_SCRIPT ? "create" : "inspect";
   try {
     if (env.CLASI_DEBUG_CHECK === "1") console.error(`clasi ownership ${probeKind} probe started`);
@@ -192,15 +193,22 @@ async function runDefaultOwnershipCommand(
         windowsHide: true,
       },
     );
+    child.once("error", error => {
+      spawnError = error;
+    });
     const deadline = Date.now() + OWNERSHIP_TIMEOUT_MS;
     let completion: string | undefined;
     while (Date.now() < deadline) {
       completion = await readFile(completionPath, "utf8").catch(() => undefined);
+      if (spawnError !== undefined) break;
       if (completion?.startsWith("ok:") || completion?.startsWith("error:")) break;
       await Bun.sleep(25);
     }
     completedBySentinel = completion?.startsWith("ok:") === true || completion?.startsWith("error:") === true;
     if (env.CLASI_DEBUG_CHECK === "1") console.error(`clasi ownership ${probeKind} probe completed`);
+    if (spawnError !== undefined) {
+      return { ok: false, code: "spawn-failed", message: spawnError.message };
+    }
     if (completion === undefined || (!completion.startsWith("ok:") && !completion.startsWith("error:"))) {
       if (env.CLASI_DEBUG_CHECK === "1") {
         console.error(`clasi ownership probe stalled: ${completion ?? "not-started"}`);
