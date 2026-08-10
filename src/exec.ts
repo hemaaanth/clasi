@@ -190,6 +190,8 @@ export const runProcessFileBacked: ProcessAdapter = async invocation => {
       const finish = (result: ProcessResult): void => {
         if (settled) return;
         settled = true;
+        child.removeAllListeners();
+        child.unref();
         clearTimeout(timer);
         resolveCompletion(result);
       };
