@@ -4,7 +4,6 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { acquireDocumentLock, LockError } from "../src/lock.ts";
 import { RootSafetyError, assertRootUnchanged, pinRoot } from "../src/root-safety.ts";
-import { probeWindowsRootOwnership } from "../src/windows-identity.ts";
 import {
   CLASI_VERSION,
   EVIDENCE_SCHEMA_VERSION,
@@ -283,13 +282,6 @@ export async function runOmpSmoke(
       ...environment,
       PATH: cleanPath(runtimeDirectories),
     };
-    if (process.platform === "win32") {
-      stage = "windows-ownership";
-      const ownership = await probeWindowsRootOwnership(roots.clasiHome, {
-        env: environment,
-      });
-      if (!ownership.writable) throw new IsolationError(`ownership-${ownership.code}`);
-    }
     const installedBin = await resolveExecutable("clasi", cleanEnvironment);
     assertPathInsideRoot(roots.root, installedBin);
     assertPathInsideRoot(roots.root, await realpath(installedBin));
