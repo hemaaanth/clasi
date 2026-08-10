@@ -236,7 +236,7 @@ export async function runOmpSmoke(
       });
       packageDiagnostics = inspectDoctorOutput(installedDoctor.stdout, manifest);
     }
-    stage = "global-cli";
+    stage = "global-install";
     await checked(adapter, {
       command: bunExecutable,
       args: [
@@ -254,6 +254,7 @@ export async function runOmpSmoke(
     assert.equal(gitTransport.unexpectedRequest, false);
     gitTransport.stop();
     gitTransport = undefined;
+    stage = "global-bin";
     const bunBinOutput = await checked(adapter, {
       command: bunExecutable,
       args: ["pm", "bin", "--global"],
@@ -261,20 +262,34 @@ export async function runOmpSmoke(
       env: environment,
     });
     const globalBin = parseAbsoluteSingleLine(bunBinOutput.stdout);
+    const runtimeDirectories = [dirname(bunExecutable), globalBin];
+    if (process.platform === "win32") {
+      const powershell = join(
+        process.env.SystemRoot ?? "C:\\Windows",
+        "System32",
+        "WindowsPowerShell",
+        "v1.0",
+        "powershell.exe",
+      );
+      await access(powershell);
+      runtimeDirectories.push(dirname(powershell));
+    }
     assertPathInsideRoot(roots.root, globalBin);
     const cleanEnvironment = {
       ...environment,
-      PATH: cleanPath([dirname(bunExecutable), globalBin]),
+      PATH: cleanPath(runtimeDirectories),
     };
     const installedBin = await resolveExecutable("clasi", cleanEnvironment);
     assertPathInsideRoot(roots.root, installedBin);
     assertPathInsideRoot(roots.root, await realpath(installedBin));
+    stage = "global-status";
     const globalStatus = await checked(adapter, {
       command: "clasi",
       args: ["status"],
       cwd: packageRoot,
       env: cleanEnvironment,
     });
+    stage = "global-status-output";
     assertClasiStatus(globalStatus.stdout, roots.clasiHome);
     stage = "uninstall";
 
