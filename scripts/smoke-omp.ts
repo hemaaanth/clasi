@@ -140,7 +140,7 @@ export async function runOmpSmoke(
     for (const path of Object.values(paths)) assertPathInsideRoot(roots.root, path);
 
     stage = "setup";
-    await checked(adapter, {
+    await runCheckedClasiSetup(adapter, {
       command: bunExecutable,
       args: [join(packageRoot, "bin", "clasi.ts"), "setup", "--root", roots.clasiHome, "--confirm"],
       cwd: packageRoot,
@@ -326,8 +326,11 @@ export async function runOmpSmoke(
       windowsSidAcl,
       publicInstall: publicGitSpec !== undefined,
     };
-  } catch {
-    throw new IsolationError(`smoke-${stage}-failed`);
+  } catch (error) {
+    const failedStage = error instanceof IsolationError && /^setup-[a-z][a-z0-9-]{0,63}$/.test(error.code)
+      ? error.code
+      : stage;
+    throw new IsolationError(`smoke-${failedStage}-failed`);
   } finally {
     if (stub !== undefined) {
       stub.clear();
@@ -796,6 +799,28 @@ async function writeModelsConfiguration(path: string, baseUrl: string): Promise<
     "        maxTokens: 1024",
     "",
   ].join("\n"), { flag: "wx", mode: 0o600 });
+}
+
+async function runCheckedClasiSetup(
+  adapter: ProcessAdapter,
+  request: ProcessRequest,
+): Promise<void> {
+  const result = await adapter(request);
+  try {
+    await runCheckedProcess(async () => result, request);
+  } catch (error) {
+    if (!(error instanceof IsolationError) || error.code !== "process-failed") throw error;
+    const value = parseJson(result.stdout, "clasi-setup-response-invalid");
+    if (
+      !isRecord(value) ||
+      value.schema_version !== 1 ||
+      typeof value.code !== "string" ||
+      !/^[a-z][a-z0-9-]{0,63}$/.test(value.code)
+    ) {
+      throw new IsolationError("clasi-setup-response-invalid");
+    }
+    throw new IsolationError(`setup-${value.code}`);
+  }
 }
 
 function assertClasiStatus(stdout: string, dataRoot: string): void {
