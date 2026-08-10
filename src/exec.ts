@@ -1,8 +1,7 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 65_536;
-const EXIT_OUTPUT_GRACE_MS = 100;
 
 export interface ProcessInvocation {
   command: string;
@@ -124,15 +123,11 @@ export const runProcess: ProcessAdapter = invocation => {
   let outputBytes = 0;
   let settled = false;
   let timer: NodeJS.Timeout | undefined;
-  let exitTimer: NodeJS.Timeout | undefined;
 
   const finish = (result: ProcessResult): void => {
     if (settled) return;
     settled = true;
     clearTimeout(timer);
-    clearTimeout(exitTimer);
-    child.stdout.destroy();
-    child.stderr.destroy();
     resolve(result);
   };
   const collect = (target: Buffer[], chunk: Buffer): void => {
@@ -148,17 +143,14 @@ export const runProcess: ProcessAdapter = invocation => {
   child.stdout.on("data", (chunk: Buffer) => collect(stdout, chunk));
   child.stderr.on("data", (chunk: Buffer) => collect(stderr, chunk));
   child.once("error", error => finish({ status: "spawn-failed", message: error.message }));
-  const exited = (code: number | null): ProcessResult => ({
-    status: "exited",
-    exitCode: code ?? 1,
-    stdout: Buffer.concat(stdout),
-    stderr: Buffer.concat(stderr),
+  child.once("close", code => {
+    finish({
+      status: "exited",
+      exitCode: code ?? 1,
+      stdout: Buffer.concat(stdout),
+      stderr: Buffer.concat(stderr),
+    });
   });
-  child.once("exit", code => {
-    if (settled) return;
-    exitTimer = setTimeout(() => finish(exited(code)), EXIT_OUTPUT_GRACE_MS);
-  });
-  child.once("close", code => finish(exited(code)));
 
   timer = setTimeout(() => {
     child.kill();
@@ -166,6 +158,35 @@ export const runProcess: ProcessAdapter = invocation => {
   }, invocation.timeoutMs);
 
   return promise;
+};
+
+export const runProcessSync: ProcessAdapter = invocation => {
+  const result = spawnSync(invocation.command, [...invocation.args], {
+    cwd: invocation.cwd,
+    env: invocation.env,
+    shell: false,
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+    timeout: invocation.timeoutMs,
+    maxBuffer: invocation.maxOutputBytes,
+  });
+  if (result.error) {
+    const code = (result.error as NodeJS.ErrnoException).code;
+    if (code === "ETIMEDOUT") return Promise.resolve({ status: "timed-out" });
+    if (code === "ENOBUFS") return Promise.resolve({ status: "output-too-large" });
+    return Promise.resolve({ status: "spawn-failed", message: result.error.message });
+  }
+  const stdout = result.stdout ?? new Uint8Array();
+  const stderr = result.stderr ?? new Uint8Array();
+  if (stdout.byteLength + stderr.byteLength > invocation.maxOutputBytes) {
+    return Promise.resolve({ status: "output-too-large" });
+  }
+  return Promise.resolve({
+    status: "exited",
+    exitCode: result.status ?? 1,
+    stdout,
+    stderr,
+  });
 };
 
 function failure(code: Exclude<JsonCommandResult, { ok: true }>["code"], message: string) {

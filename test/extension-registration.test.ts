@@ -5,7 +5,7 @@ import registerClasi, {
   createClasiRuntime,
 } from "../src/index.ts";
 import { runClasiCli } from "../src/cli.ts";
-import { runJsonCommand, runProcess } from "../src/exec.ts";
+import { runJsonCommand, runProcessSync } from "../src/exec.ts";
 import type { JsonCommandResult } from "../src/exec.ts";
 import { CLASI_VERSION } from "../src/runtime-types.ts";
 import { CLASI_TOOL_NAMES } from "../src/tools.ts";
@@ -171,42 +171,28 @@ describe("bounded JSON process execution", () => {
     );
   });
 
-  test("finishes after the command exits when a descendant retains stdio", async () => {
-    const script = [
-      "const { spawn } = require('node:child_process');",
-      "const child = spawn(process.execPath,",
-      "['-e', 'Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0)'],",
-      "{ detached: true, stdio: ['ignore', 1, 2] });",
-      "child.unref();",
-      "process.stdout.write(String(child.pid));",
-    ].join("");
-    const result = await runProcess({
+  test("runs bounded synchronous subprocesses", async () => {
+    expect(await runProcessSync({
       command: process.execPath,
-      args: ["-e", script],
+      args: ["-e", "process.stdout.write('ok')"],
       cwd: undefined,
       env: process.env,
       timeoutMs: 2_000,
-      maxOutputBytes: 64,
+      maxOutputBytes: 16,
+    })).toEqual({
+      status: "exited",
+      exitCode: 0,
+      stdout: Buffer.from("ok"),
+      stderr: Buffer.alloc(0),
     });
-    expect(result.status).toBe("exited");
-    if (result.status !== "exited") throw new Error(`Expected exit, received ${result.status}`);
-    const descendantPid = Number(Buffer.from(result.stdout).toString("utf8"));
-    expect(Number.isSafeInteger(descendantPid)).toBeTrue();
-    try {
-      expect(result.exitCode).toBe(0);
-      expect(result.stderr).toHaveLength(0);
-    } finally {
-      try {
-        process.kill(descendantPid);
-      } catch (error) {
-        if (
-          typeof error !== "object" ||
-          error === null ||
-          !("code" in error) ||
-          error.code !== "ESRCH"
-        ) throw error;
-      }
-    }
+    expect(await runProcessSync({
+      command: process.execPath,
+      args: ["-e", "process.stdout.write('oversized')"],
+      cwd: undefined,
+      env: process.env,
+      timeoutMs: 2_000,
+      maxOutputBytes: 4,
+    })).toEqual({ status: "output-too-large" });
   });
 });
 

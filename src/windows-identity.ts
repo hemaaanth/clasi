@@ -1,5 +1,5 @@
 import type { JsonCommandOptions, ProcessAdapter } from "./exec.ts";
-import { runJsonCommand } from "./exec.ts";
+import { runJsonCommand, runProcessSync } from "./exec.ts";
 
 const WINDOWS_POWERSHELL_COMMANDS = ["pwsh.exe", "powershell.exe"] as const;
 
@@ -64,7 +64,7 @@ async function runOwnershipScript(
   options: WindowsOwnershipOptions,
 ): Promise<WindowsOwnershipResult> {
   const commandOptions: JsonCommandOptions = {
-    ...(options.adapter ? { adapter: options.adapter } : {}),
+    adapter: options.adapter ?? runProcessSync,
     env: { ...(options.env ?? process.env), CLASI_ROOT_CHECK: root },
     maxOutputBytes: 4_096,
     timeoutMs: 30_000,
