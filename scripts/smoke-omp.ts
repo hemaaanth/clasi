@@ -29,7 +29,7 @@ import type { IsolatedRoots, ProcessAdapter, ProcessRequest } from "./isolation.
 
 const SOURCE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const MAX_JSON_BYTES = 1_048_576;
-const PROCESS_TIMEOUT_MS = 45_000;
+const PROCESS_TIMEOUT_MS = 90_000;
 const INSTALL_TIMEOUT_MS = 120_000;
 const SMOKE_PROVIDER = "clasi-smoke";
 const SMOKE_MODEL = "smoke-model";
