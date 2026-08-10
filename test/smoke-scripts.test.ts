@@ -10,6 +10,7 @@ import {
   cleanupIsolatedRoots,
   createIsolatedRoots,
   runCheckedProcess,
+  spawnProcess,
 } from "../scripts/isolation.ts";
 import type { IsolatedRoots, ProcessAdapter } from "../scripts/isolation.ts";
 import {
@@ -98,6 +99,23 @@ describe("public smoke scripts", () => {
       stdout: "",
       stderr: "private failure text",
     }), { ...request, maxOutputBytes: 64 })).rejects.toEqual(new IsolationError("process-failed"));
+  });
+
+  test("supervises a real child process and maps spawn failures", async () => {
+    expect(await spawnProcess({
+      command: process.execPath,
+      args: ["-e", "process.stdout.write('ok')"],
+      cwd: resolve("."),
+      timeoutMs: 5_000,
+      maxOutputBytes: 16,
+    })).toEqual({ exitCode: 0, stdout: "ok", stderr: "" });
+    await expect(spawnProcess({
+      command: "clasi-definitely-missing-executable",
+      args: [],
+      cwd: resolve("."),
+      timeoutMs: 5_000,
+      maxOutputBytes: 16,
+    })).rejects.toEqual(new IsolationError("process-spawn-failed"));
   });
 
   test("accepts exact clasi diagnostics without retaining raw text", () => {

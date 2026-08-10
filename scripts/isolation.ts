@@ -1,3 +1,4 @@
+import { runProcess as runNodeProcess } from "../src/exec.ts";
 import { constants } from "node:fs";
 import { access, mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -174,39 +175,22 @@ export async function cleanupIsolatedRoots(roots: IsolatedRoots): Promise<void> 
 
 export const spawnProcess: ProcessAdapter = async request => {
   validateProcessRequest(request);
-  const timeoutMs = request.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const maximumBytes = request.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
-  const child = Bun.spawn([request.command, ...request.args], {
-    ...(request.cwd === undefined ? {} : { cwd: request.cwd }),
-    ...(request.env === undefined ? {} : { env: request.env }),
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "pipe",
+  const result = await runNodeProcess({
+    command: request.command,
+    args: request.args,
+    cwd: request.cwd,
+    env: request.env as NodeJS.ProcessEnv | undefined,
+    timeoutMs: request.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    maxOutputBytes: request.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
   });
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => {
-      child.kill();
-      reject(new IsolationError("process-timeout"));
-    }, timeoutMs);
-    timer.unref?.();
-  });
-
-  try {
-    const completed = Promise.all([
-      child.exited,
-      readBounded(child.stdout, maximumBytes),
-      readBounded(child.stderr, maximumBytes),
-    ]);
-    const [exitCode, stdout, stderr] = await Promise.race([completed, timeout]);
-    return { exitCode, stdout, stderr };
-  } catch (error) {
-    child.kill();
-    await child.exited.catch(() => undefined);
-    throw error;
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
-  }
+  if (result.status === "spawn-failed") throw new IsolationError("process-spawn-failed");
+  if (result.status === "timed-out") throw new IsolationError("process-timeout");
+  if (result.status === "output-too-large") throw new IsolationError("process-output-limit");
+  return {
+    exitCode: result.exitCode,
+    stdout: Buffer.from(result.stdout).toString("utf8"),
+    stderr: Buffer.from(result.stderr).toString("utf8"),
+  };
 };
 
 export async function runCheckedProcess(
@@ -277,22 +261,4 @@ function validateProcessRequest(request: ProcessRequest): void {
     throw new IsolationError("invalid-output-limit");
   }
   if (request.cwd !== undefined && !isAbsolute(request.cwd)) throw new IsolationError("cwd-not-absolute");
-}
-
-async function readBounded(stream: ReadableStream<Uint8Array>, maximumBytes: number): Promise<string> {
-  const reader = stream.getReader();
-  const chunks: Uint8Array[] = [];
-  let bytes = 0;
-  try {
-    while (true) {
-      const next = await reader.read();
-      if (next.done) break;
-      bytes += next.value.byteLength;
-      if (bytes > maximumBytes) throw new IsolationError("process-output-limit");
-      chunks.push(next.value);
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  return Buffer.concat(chunks, bytes).toString("utf8");
 }
