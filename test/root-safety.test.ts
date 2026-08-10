@@ -314,6 +314,17 @@ describe("native Windows ownership probe", () => {
     );
   });
 
+  test("falls back when process spawning fails asynchronously", async () => {
+    await withTempDirectory(async temporary => {
+      expectOwnershipFailure(
+        await probeWindowsRootOwnership("C:\\safe", {
+          env: { PATH: "", TEMP: temporary },
+        }),
+        "powershell-unavailable",
+      );
+    });
+  });
+
   test("rejects forged ownership result files", () => {
     const key = Buffer.alloc(32, 7);
     const result = Buffer.from(ownershipPayload());

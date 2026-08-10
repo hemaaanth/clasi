@@ -202,16 +202,7 @@ export const runProcessFileBacked: ProcessAdapter = async invocation => {
     ]);
     clearTimeout(timer);
     child.unref();
-    if (result.status !== "exited") {
-      if (result.status === "timed-out" && invocation.env?.CLASI_DEBUG_CHECK === "1") {
-        const stderrStats = await stat(stderrPath).catch(() => undefined);
-        if (stderrStats !== undefined && stderrStats.size <= 16_384) {
-          const diagnostics = await readFile(stderrPath, "utf8").catch(() => "");
-          if (diagnostics) console.error(`clasi timed-out child diagnostics:\n${diagnostics}`);
-        }
-      }
-      return result;
-    }
+    if (result.status !== "exited") return result;
     const [stdoutStats, stderrStats] = await Promise.all([stat(stdoutPath), stat(stderrPath)]);
     if (stdoutStats.size + stderrStats.size > invocation.maxOutputBytes) {
       return { status: "output-too-large" };

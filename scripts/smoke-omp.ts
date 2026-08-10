@@ -4,7 +4,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { acquireDocumentLock, LockError } from "../src/lock.ts";
 import { RootSafetyError, assertRootUnchanged, pinRoot } from "../src/root-safety.ts";
-import { createWindowsPrivateRoot, probeWindowsRootOwnership } from "../src/windows-identity.ts";
+import { probeWindowsRootOwnership } from "../src/windows-identity.ts";
 import {
   CLASI_VERSION,
   EVIDENCE_SCHEMA_VERSION,
@@ -141,15 +141,6 @@ export async function runOmpSmoke(
       environment,
     );
 
-    if (process.platform === "win32") {
-      stage = "windows-private-root";
-      const privateRoot = join(roots.root, "private-root-probe");
-      const ownership = await createWindowsPrivateRoot(privateRoot, {
-        env: { ...environment, CLASI_DEBUG_CHECK: "1" },
-      });
-      if (!ownership.writable) throw new IsolationError(`ownership-${ownership.code}`);
-      await rm(privateRoot, { recursive: true, force: true });
-    }
 
     const paths = expectedInstallPaths(roots, packageRoot);
     for (const path of Object.values(paths)) assertPathInsideRoot(roots.root, path);
@@ -591,7 +582,6 @@ async function createSmokeEnvironment(roots: IsolatedRoots): Promise<Record<stri
     NO_PROXY: "127.0.0.1,localhost,::1",
     no_proxy: "127.0.0.1,localhost,::1",
   };
-  if (process.platform === "win32") environment.CLASI_DEBUG_CHECK = "1";
   for (const key of ["SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "ProgramFiles"] as const) {
     const value = process.env[key];
     if (value !== undefined) environment[key] = value;

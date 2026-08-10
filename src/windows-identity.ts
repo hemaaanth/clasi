@@ -21,20 +21,13 @@ export const WINDOWS_OWNERSHIP_SCRIPT = [
 const WINDOWS_CREATE_PRIVATE_ROOT_SCRIPT = [
   "$ErrorActionPreference = 'Stop'",
   "$current = [System.Security.Principal.WindowsIdentity]::GetCurrent().User",
-  "[System.IO.File]::WriteAllText($env:CLASI_OWNERSHIP_COMPLETE, 'step:identity')",
   "$security = [System.Security.AccessControl.DirectorySecurity]::new()",
-  "[System.IO.File]::WriteAllText($env:CLASI_OWNERSHIP_COMPLETE, 'step:security')",
   "$security.SetAccessRuleProtection($true, $false)",
-  "[System.IO.File]::WriteAllText($env:CLASI_OWNERSHIP_COMPLETE, 'step:protection')",
   "$security.SetOwner($current)",
-  "[System.IO.File]::WriteAllText($env:CLASI_OWNERSHIP_COMPLETE, 'step:owner')",
   "$inheritance = [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [System.Security.AccessControl.InheritanceFlags]::ObjectInherit",
   "$rule = [System.Security.AccessControl.FileSystemAccessRule]::new($current, [System.Security.AccessControl.FileSystemRights]::FullControl, $inheritance, [System.Security.AccessControl.PropagationFlags]::None, [System.Security.AccessControl.AccessControlType]::Allow)",
-  "[System.IO.File]::WriteAllText($env:CLASI_OWNERSHIP_COMPLETE, 'step:rule')",
   "$security.AddAccessRule($rule)",
-  "[System.IO.File]::WriteAllText($env:CLASI_OWNERSHIP_COMPLETE, 'step:access')",
   "if ($PSVersionTable.PSEdition -eq 'Core') { $created = [System.IO.FileSystemAclExtensions]::CreateDirectory($security, $env:CLASI_ROOT_CHECK); $actual = [System.IO.FileSystemAclExtensions]::GetAccessControl($created) } else { $created = [System.IO.Directory]::CreateDirectory($env:CLASI_ROOT_CHECK, $security); $actual = $created.GetAccessControl() }",
-  "[System.IO.File]::WriteAllText($env:CLASI_OWNERSHIP_COMPLETE, 'step:create')",
   "$hasInheritedRule = $false",
   "foreach ($access in $actual.Access) { if ($access.IsInherited) { $hasInheritedRule = $true } }",
   "if ($hasInheritedRule) { throw 'Inherited access rule detected' }",
@@ -167,7 +160,6 @@ async function runDefaultOwnershipCommand(
   const scriptPath = join(captureRoot, "probe.ps1");
   const authenticationKey = randomBytes(32);
   const wrappedScript = [
-    "[System.IO.File]::WriteAllText($env:CLASI_OWNERSHIP_COMPLETE, 'started')",
     "$encoding = [System.Text.UTF8Encoding]::new($false)",
     `try { $result = & { ${script} }; $text = [string]$result; $key = [Convert]::FromBase64String($env:CLASI_OWNERSHIP_KEY); $hmac = [System.Security.Cryptography.HMACSHA256]::new(); try { $hmac.Key = $key; $signature = [Convert]::ToBase64String($hmac.ComputeHash($encoding.GetBytes($text))) } finally { $hmac.Dispose() }; [System.IO.File]::WriteAllText($env:CLASI_OWNERSHIP_RESULT, $text, $encoding); [System.IO.File]::WriteAllText($env:CLASI_OWNERSHIP_COMPLETE, "ok:$signature", $encoding) }`,
     "catch { $name = $_.Exception.GetType().Name; if ($name -eq 'UnauthorizedAccessException') { $kind = 'access' } elseif ($name -eq 'MethodException' -or $name -eq 'MethodInvocationException') { $kind = 'method' } elseif ($name -eq 'PlatformNotSupportedException') { $kind = 'platform' } elseif ($name -eq 'RuntimeException') { $kind = 'runtime' } else { $kind = 'other' }; [System.IO.File]::WriteAllText($env:CLASI_OWNERSHIP_COMPLETE, \"error:$kind\", $encoding) }",
@@ -175,9 +167,7 @@ async function runDefaultOwnershipCommand(
   let child: ReturnType<typeof spawn> | undefined;
   let completedBySentinel = false;
   let spawnError: Error | undefined;
-  const probeKind = script === WINDOWS_CREATE_PRIVATE_ROOT_SCRIPT ? "create" : "inspect";
   try {
-    if (env.CLASI_DEBUG_CHECK === "1") console.error(`clasi ownership ${probeKind} probe started`);
     await writeFile(scriptPath, wrappedScript, { encoding: "utf8", mode: 0o600 });
     child = spawn(
       command,
@@ -205,14 +195,10 @@ async function runDefaultOwnershipCommand(
       await Bun.sleep(25);
     }
     completedBySentinel = completion?.startsWith("ok:") === true || completion?.startsWith("error:") === true;
-    if (env.CLASI_DEBUG_CHECK === "1") console.error(`clasi ownership ${probeKind} probe completed`);
     if (spawnError !== undefined) {
       return { ok: false, code: "spawn-failed", message: spawnError.message };
     }
     if (completion === undefined || (!completion.startsWith("ok:") && !completion.startsWith("error:"))) {
-      if (env.CLASI_DEBUG_CHECK === "1") {
-        console.error(`clasi ownership probe stalled: ${completion ?? "not-started"}`);
-      }
       return {
         ok: false,
         code: "timeout",
