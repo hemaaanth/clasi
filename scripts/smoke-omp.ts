@@ -287,7 +287,7 @@ export async function runOmpSmoke(
     assertPathInsideRoot(roots.root, await realpath(installedBin));
     stage = "global-status";
     const globalStatus = await checked(adapter, {
-      command: "clasi",
+      command: installedBin,
       args: ["status"],
       cwd: packageRoot,
       env: cleanEnvironment,
@@ -330,8 +330,10 @@ export async function runOmpSmoke(
       publicInstall: publicGitSpec !== undefined,
     };
   } catch (error) {
-    const failedStage = error instanceof IsolationError && /^setup-[a-z][a-z0-9-]{0,63}$/.test(error.code)
-      ? error.code
+    const failedStage = error instanceof IsolationError
+      ? /^setup-[a-z][a-z0-9-]{0,63}$/.test(error.code)
+        ? error.code
+        : `${stage}-${error.code}`
       : error instanceof RootSafetyError
         ? `${stage}-${error.code}`
         : stage;
