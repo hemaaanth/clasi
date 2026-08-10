@@ -1,4 +1,7 @@
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
+import { mkdir, mkdtemp, open, readFile, rm, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { isAbsolute, join } from "node:path";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 65_536;
@@ -160,33 +163,74 @@ export const runProcess: ProcessAdapter = invocation => {
   return promise;
 };
 
-export const runProcessSync: ProcessAdapter = invocation => {
-  const result = spawnSync(invocation.command, [...invocation.args], {
-    cwd: invocation.cwd,
-    env: invocation.env,
-    shell: false,
-    stdio: ["ignore", "pipe", "pipe"],
-    windowsHide: true,
-    timeout: invocation.timeoutMs,
-    maxBuffer: invocation.maxOutputBytes,
-  });
-  if (result.error) {
-    const code = (result.error as NodeJS.ErrnoException).code;
-    if (code === "ETIMEDOUT") return Promise.resolve({ status: "timed-out" });
-    if (code === "ENOBUFS") return Promise.resolve({ status: "output-too-large" });
-    return Promise.resolve({ status: "spawn-failed", message: result.error.message });
+export const runProcessFileBacked: ProcessAdapter = async invocation => {
+  const outputRoot = invocation.env?.TEMP ?? invocation.env?.TMP ?? tmpdir();
+  if (!isAbsolute(outputRoot)) {
+    return { status: "spawn-failed", message: "Temporary directory is not absolute" };
   }
-  const stdout = result.stdout ?? new Uint8Array();
-  const stderr = result.stderr ?? new Uint8Array();
-  if (stdout.byteLength + stderr.byteLength > invocation.maxOutputBytes) {
-    return Promise.resolve({ status: "output-too-large" });
+  await mkdir(outputRoot, { recursive: true, mode: 0o700 });
+  const captureRoot = await mkdtemp(join(outputRoot, "clasi-process-"));
+  const stdoutPath = join(captureRoot, "stdout");
+  const stderrPath = join(captureRoot, "stderr");
+  const [stdoutHandle, stderrHandle] = await Promise.all([
+    open(stdoutPath, "wx", 0o600),
+    open(stderrPath, "wx", 0o600),
+  ]);
+  try {
+    const child = spawn(invocation.command, [...invocation.args], {
+      cwd: invocation.cwd,
+      env: invocation.env,
+      shell: false,
+      stdio: ["ignore", stdoutHandle.fd, stderrHandle.fd],
+      windowsHide: true,
+    });
+    const completion = new Promise<ProcessResult>(resolveCompletion => {
+      let settled = false;
+      let timer: NodeJS.Timeout | undefined;
+      const finish = (result: ProcessResult): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolveCompletion(result);
+      };
+      child.once("error", error => {
+        finish({ status: "spawn-failed", message: error.message });
+      });
+      child.once("close", code => {
+        finish({
+          status: "exited",
+          exitCode: code ?? 1,
+          stdout: new Uint8Array(),
+          stderr: new Uint8Array(),
+        });
+      });
+      timer = setTimeout(() => {
+        if (settled) return;
+        child.kill();
+        finish({ status: "timed-out" });
+      }, invocation.timeoutMs);
+    });
+    await Promise.all([stdoutHandle.close(), stderrHandle.close()]);
+    const result = await completion;
+    if (result.status !== "exited") return result;
+    const [stdoutStats, stderrStats] = await Promise.all([stat(stdoutPath), stat(stderrPath)]);
+    if (stdoutStats.size + stderrStats.size > invocation.maxOutputBytes) {
+      return { status: "output-too-large" };
+    }
+    const [stdout, stderr] = await Promise.all([readFile(stdoutPath), readFile(stderrPath)]);
+    return { ...result, stdout, stderr };
+  } catch (error) {
+    return {
+      status: "spawn-failed",
+      message: error instanceof Error ? error.message : "Process failed to start",
+    };
+  } finally {
+    await Promise.all([
+      stdoutHandle.close().catch(() => undefined),
+      stderrHandle.close().catch(() => undefined),
+    ]);
+    await rm(captureRoot, { recursive: true, force: true });
   }
-  return Promise.resolve({
-    status: "exited",
-    exitCode: result.status ?? 1,
-    stdout,
-    stderr,
-  });
 };
 
 function failure(code: Exclude<JsonCommandResult, { ok: true }>["code"], message: string) {

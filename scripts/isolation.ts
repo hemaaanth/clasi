@@ -1,7 +1,9 @@
-import { runProcess as runNodeProcess } from "../src/exec.ts";
-import { spawn } from "node:child_process";
+import {
+  runProcess as runNodeProcess,
+  runProcessFileBacked as runNodeProcessFileBacked,
+} from "../src/exec.ts";
 import { constants } from "node:fs";
-import { access, mkdir, mkdtemp, open, readFile, realpath, rm, stat } from "node:fs/promises";
+import { access, mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import {
   basename,
@@ -196,62 +198,22 @@ export const spawnProcess: ProcessAdapter = async request => {
 
 export const spawnProcessFileBacked: ProcessAdapter = async request => {
   validateProcessRequest(request);
-  const outputRoot = request.env?.TMP ?? request.env?.TEMP ?? tmpdir();
-  if (!isAbsolute(outputRoot)) throw new IsolationError("capture-root-not-absolute");
-  await mkdir(outputRoot, { recursive: true, mode: 0o700 });
-  const captureRoot = await mkdtemp(join(outputRoot, "clasi-process-"));
-  const stdoutPath = join(captureRoot, "stdout");
-  const stderrPath = join(captureRoot, "stderr");
-  const [stdoutHandle, stderrHandle] = await Promise.all([
-    open(stdoutPath, "wx", 0o600),
-    open(stderrPath, "wx", 0o600),
-  ]);
-  try {
-    const child = spawn(request.command, [...request.args], {
-      cwd: request.cwd,
-      env: request.env as NodeJS.ProcessEnv | undefined,
-      shell: false,
-      stdio: ["ignore", stdoutHandle.fd, stderrHandle.fd],
-      windowsHide: true,
-    });
-    const exitPromise = new Promise<number>((resolveExit, rejectExit) => {
-      let settled = false;
-      let timer: NodeJS.Timeout | undefined;
-      const finish = (error?: IsolationError, code?: number): void => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        if (error) rejectExit(error);
-        else resolveExit(code ?? 1);
-      };
-      child.once("error", () => finish(new IsolationError("process-spawn-failed")));
-      child.once("close", code => finish(undefined, code ?? 1));
-      timer = setTimeout(() => {
-        if (settled) return;
-        child.kill();
-        finish(new IsolationError("process-timeout"));
-      }, request.timeoutMs ?? DEFAULT_TIMEOUT_MS);
-    });
-    await Promise.all([stdoutHandle.close(), stderrHandle.close()]);
-    const exitCode = await exitPromise;
-    const [stdoutStats, stderrStats] = await Promise.all([stat(stdoutPath), stat(stderrPath)]);
-    const maximumBytes = request.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
-    if (stdoutStats.size + stderrStats.size > maximumBytes) {
-      throw new IsolationError("process-output-limit");
-    }
-    const [stdout, stderr] = await Promise.all([readFile(stdoutPath), readFile(stderrPath)]);
-    return {
-      exitCode,
-      stdout: stdout.toString("utf8"),
-      stderr: stderr.toString("utf8"),
-    };
-  } finally {
-    await Promise.all([
-      stdoutHandle.close().catch(() => undefined),
-      stderrHandle.close().catch(() => undefined),
-    ]);
-    await rm(captureRoot, { recursive: true, force: true });
-  }
+  const result = await runNodeProcessFileBacked({
+    command: request.command,
+    args: request.args,
+    cwd: request.cwd,
+    env: request.env as NodeJS.ProcessEnv | undefined,
+    timeoutMs: request.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    maxOutputBytes: request.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
+  });
+  if (result.status === "spawn-failed") throw new IsolationError("process-spawn-failed");
+  if (result.status === "timed-out") throw new IsolationError("process-timeout");
+  if (result.status === "output-too-large") throw new IsolationError("process-output-limit");
+  return {
+    exitCode: result.exitCode,
+    stdout: Buffer.from(result.stdout).toString("utf8"),
+    stderr: Buffer.from(result.stderr).toString("utf8"),
+  };
 };
 
 export async function runCheckedProcess(

@@ -5,7 +5,7 @@ import registerClasi, {
   createClasiRuntime,
 } from "../src/index.ts";
 import { runClasiCli } from "../src/cli.ts";
-import { runJsonCommand, runProcessSync } from "../src/exec.ts";
+import { runJsonCommand, runProcessFileBacked } from "../src/exec.ts";
 import type { JsonCommandResult } from "../src/exec.ts";
 import { CLASI_VERSION } from "../src/runtime-types.ts";
 import { CLASI_TOOL_NAMES } from "../src/tools.ts";
@@ -171,8 +171,8 @@ describe("bounded JSON process execution", () => {
     );
   });
 
-  test("runs bounded synchronous subprocesses", async () => {
-    expect(await runProcessSync({
+  test("runs bounded file-backed subprocesses", async () => {
+    expect(await runProcessFileBacked({
       command: process.execPath,
       args: ["-e", "process.stdout.write('ok')"],
       cwd: undefined,
@@ -185,7 +185,7 @@ describe("bounded JSON process execution", () => {
       stdout: Buffer.from("ok"),
       stderr: Buffer.alloc(0),
     });
-    expect(await runProcessSync({
+    expect(await runProcessFileBacked({
       command: process.execPath,
       args: ["-e", "process.stdout.write('oversized')"],
       cwd: undefined,
