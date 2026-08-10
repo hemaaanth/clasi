@@ -21,8 +21,7 @@ jobs:
           - macos-latest
           - windows-latest
     env:
-      CLASI_EVIDENCE_DIR: ${{ runner.temp }}/clasi-evidence
-      CLASI_PUBLIC_GIT_SPEC: github:${{ github.repository }}#${{ github.sha }}
+      CLASI_PUBLIC_GIT_SPEC: "github:${{ github.repository }}#${{ github.sha }}"
 
     steps:
       - name: Check out repository
@@ -51,6 +50,7 @@ jobs:
         run: bun run smoke:omp
         env:
           CLASI_OMP_MATRIX_ROW: minimum
+          CLASI_EVIDENCE_DIR: ${{ runner.temp }}/clasi-evidence
 
       - name: Install latest OMP 17.x
         run: bun update --no-save "@oh-my-pi/pi-coding-agent@17"
@@ -68,6 +68,7 @@ jobs:
         run: bun run smoke:omp
         env:
           CLASI_OMP_MATRIX_ROW: latest_17
+          CLASI_EVIDENCE_DIR: ${{ runner.temp }}/clasi-evidence
 
       - name: Upload actual platform evidence
         if: always()
@@ -83,8 +84,6 @@ jobs:
     needs: platform
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    env:
-      CLASI_EVIDENCE_DIR: ${{ runner.temp }}/clasi-evidence
 
     steps:
       - name: Check out repository
@@ -108,6 +107,8 @@ jobs:
           merge-multiple: true
 
       - name: Validate macOS and Windows evidence together
+        env:
+          CLASI_EVIDENCE_DIR: ${{ runner.temp }}/clasi-evidence
         run: >-
           bun -e 'import { readPlatformEvidence } from "./scripts/evidence-schema.ts";
           const directory = process.env.CLASI_EVIDENCE_DIR;
@@ -118,6 +119,8 @@ jobs:
 
       - name: Confirm incomplete CI evidence cannot pass the release gate
         shell: bash
+        env:
+          CLASI_EVIDENCE_DIR: ${{ runner.temp }}/clasi-evidence
         run: |
           if bun run release:validate; then
             echo "release validation unexpectedly passed without actual WSL and model evidence"

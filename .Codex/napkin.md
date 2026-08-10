@@ -15,6 +15,8 @@
    Do instead: wrap both `opendir(path)` and the first `Dir.read()` in the same error boundary; the awaited open alone may appear successful.
 2. **[2026-08-09] `bun add --no-save` can retain a locked package version**
    Do instead: use `bun update --no-save package@range` for a temporary CI compatibility row that must resolve the newest matching release.
+3. **[2026-08-09] GitHub Actions forbids `runner` in job-level `env`**
+   Do instead: place `${{ runner.temp }}` variables on the individual steps that consume them; validate workflows with `actionlint` before pushing.
 
 
 ## Domain Behavior Guardrails
