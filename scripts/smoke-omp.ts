@@ -284,6 +284,7 @@ export async function runOmpSmoke(
     const installedBin = await resolveExecutable("clasi", cleanEnvironment);
     assertPathInsideRoot(roots.root, installedBin);
     assertPathInsideRoot(roots.root, await realpath(installedBin));
+    stage = "global-status";
     const globalStatus = await runCheckedClasiStatus(adapter, {
       command: installedBin,
       args: ["status"],
