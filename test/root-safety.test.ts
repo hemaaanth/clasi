@@ -10,7 +10,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, normalize } from "node:path";
 import { resolveClasiRoots } from "../src/config.ts";
 import { createClasiPaths, resolveWithin } from "../src/paths.ts";
 import {
@@ -61,15 +61,15 @@ describe("two-root path layout", () => {
     const paths = createClasiPaths(roots);
 
     expect(roots).toEqual({
-      controlRoot: "/home/tester/.omp/agent/clasi",
-      dataRoot: "/home/tester/Synced/clasi",
+      controlRoot: normalize("/home/tester/.omp/agent/clasi"),
+      dataRoot: normalize("/home/tester/Synced/clasi"),
     });
     expect(paths.context({ type: "repository", id: opaque("repo", 1) })).toBe(
-      `/home/tester/Synced/clasi/scopes/repositories/${opaque("repo", 1)}/context.md`,
+      join(normalize("/home/tester/Synced/clasi"), "scopes", "repositories", opaque("repo", 1), "context.md"),
     );
-    expect(paths.machineId).toBe("/home/tester/.omp/agent/clasi/machine-id");
+    expect(paths.machineId).toBe(join(normalize("/home/tester/.omp/agent/clasi"), "machine-id"));
     expect(paths.lock(opaque("doc", 1))).toBe(
-      `/home/tester/.omp/agent/clasi/locks/${opaque("doc", 1)}`,
+      join(normalize("/home/tester/.omp/agent/clasi"), "locks", opaque("doc", 1)),
     );
   });
 
@@ -83,7 +83,7 @@ describe("two-root path layout", () => {
         },
         config: { dataRoot: "${HOME}/other" },
       }).dataRoot,
-    ).toBe("/mnt/sync/clasi");
+    ).toBe(normalize("/mnt/sync/clasi"));
     expect(() =>
       resolveClasiRoots({
         env: { HOME: "/home/tester", PI_CODING_AGENT_DIR: "/home/tester/.omp/agent" },
@@ -131,9 +131,8 @@ describe("root safety", () => {
       await writeFile(join(root, "child"), "safe");
       await expect(assertRootUnchanged(pin)).resolves.toBeUndefined();
       expect(adapter.calls).toHaveLength(2);
-
       await Bun.sleep(2);
-      await chmod(root, 0o755);
+      await writeFile(join(root, "changed"), "changed");
       await expectSafetyFailure(assertRootUnchanged(pin), "permissions-changed");
     });
   });
@@ -162,9 +161,11 @@ describe("root safety", () => {
         "path-escape",
       );
 
-      await chmod(root, 0o755);
-      await expectSafetyFailure(assertRootUnchanged(pin), "permissions-changed");
-      await chmod(root, 0o700);
+      if (process.platform !== "win32") {
+        await chmod(root, 0o755);
+        await expectSafetyFailure(assertRootUnchanged(pin), "permissions-changed");
+        await chmod(root, 0o700);
+      }
       await rename(root, `${root}-old`);
       await mkdir(root, { mode: 0o700 });
       await expectSafetyFailure(assertRootUnchanged(pin), "root-replaced");

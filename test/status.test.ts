@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { sep } from "node:path";
 import { getHeadlessConfig, getHeadlessStatus } from "../src/status.ts";
 import type { RuntimeEnvironmentReady, RuntimeEnvironmentResult } from "../src/runtime-environment.ts";
 
@@ -53,7 +54,7 @@ describe("headless status and config", () => {
         { type: "machine", id: MACHINE_ID },
         { type: "repository", id: REPOSITORY_KEY },
       ],
-      data_root: "${HOME}/sync/clasi",
+      data_root: ["${HOME}", "sync", "clasi"].join(sep),
       caps: { napkin_category: 5, context_characters: 6_000 },
       capabilities: { repository_scope: "attached", requires_reattach_on_move: false },
       degradations: [],

@@ -94,7 +94,9 @@ describe("atomic onboarding", () => {
         napkinCategoryCap: 5,
         contextCharacterCap: 6000,
       });
-      expect((await stat(paths.config)).mode & 0o777).toBe(0o600);
+      if (process.platform !== "win32") {
+        expect((await stat(paths.config)).mode & 0o777).toBe(0o600);
+      }
     });
   });
 

@@ -268,6 +268,14 @@ describe("coordination service", () => {
         "promoted",
         "2026-08-09T12:01:00.000Z",
       );
+      if (process.platform === "win32") {
+        expect(await coordination.cleanTransaction(absent.id, true)).toEqual({
+          status: "rejected",
+          code: "file-identity-unavailable",
+        });
+        await access(absent.statePath);
+        return;
+      }
       expect(await coordination.cleanTransaction(absent.id, true)).toEqual({
         status: "cleaned",
         transactionId: absent.id,
@@ -359,13 +367,17 @@ describe("coordination service", () => {
         },
       });
 
-      expect(await coordination.cleanTransaction(transaction.id, true)).toEqual({
-        status: "rejected",
-        code: "quarantine-changed",
-      });
-      await access(quarantinePath);
-      await access(movedPath);
-      await access(transaction.statePath);
+      const result = await coordination.cleanTransaction(transaction.id, true);
+      if (process.platform === "win32") {
+        expect(result).toEqual({ status: "rejected", code: "file-identity-unavailable" });
+        await access(quarantinePath);
+        await access(transaction.statePath);
+      } else {
+        expect(result).toEqual({ status: "rejected", code: "quarantine-changed" });
+        await access(quarantinePath);
+        await access(movedPath);
+        await access(transaction.statePath);
+      }
     });
   });
 
@@ -384,11 +396,15 @@ describe("coordination service", () => {
       }
 
       const result = await coordination.listLocks(2);
-      expect(result).toEqual({
-        status: "ok",
-        documentIds: [opaque("doc", 1), opaque("doc", 2)],
-        truncated: true,
-      });
+      if (process.platform === "win32") {
+        expect(result).toEqual({ status: "rejected", code: "lock-state-invalid" });
+      } else {
+        expect(result).toEqual({
+          status: "ok",
+          documentIds: [opaque("doc", 1), opaque("doc", 2)],
+          truncated: true,
+        });
+      }
       const serialized = JSON.stringify(result);
       expect(serialized).not.toContain("private-owner");
       expect(serialized).not.toContain("private-process");

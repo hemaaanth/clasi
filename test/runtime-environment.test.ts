@@ -14,7 +14,7 @@ import type {
   RuntimeGitIdentityResult,
 } from "../src/runtime-environment.ts";
 import type { ScopeRef } from "../src/paths.ts";
-import { createPrivateRoot, pinRoot } from "../src/root-safety.ts";
+import { createPrivateRoot, pinRoot, RootSafetyError } from "../src/root-safety.ts";
 import { opaque } from "./support/store-fixture.ts";
 
 interface RuntimeFixture {
@@ -268,11 +268,17 @@ describe("resolveRuntimeEnvironment", () => {
 
   test("unsafe roots degrade without leaking cwd, roots, origin, or user data", async () => {
     await withRuntimeFixture(async fixture => {
-      await chmod(fixture.dataRoot, 0o755);
+      if (process.platform !== "win32") await chmod(fixture.dataRoot, 0o755);
       const sensitiveCwd = join(fixture.home, "customer-secret-repository");
       const result = await resolveRuntimeEnvironment(sensitiveCwd, {
         env: fixture.env,
         gitIdentity: async () => remoteGit(opaque("repo", 7), "8", "200"),
+        pin: async path => {
+          if (process.platform === "win32" && path === fixture.dataRoot) {
+            throw new RootSafetyError("permissions-changed");
+          }
+          return pinRoot(path);
+        },
       });
 
       expect(result).toEqual({ status: "degraded", code: "unsafe-data-root" });

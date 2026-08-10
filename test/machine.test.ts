@@ -174,7 +174,9 @@ describe("machine identity", () => {
       expect(first).toBe("machine_11111111111111111111111111111111");
       expect(second).toBe(first);
       expect(await readFile(paths.machineId, "utf8")).toBe(`${first}\n`);
-      expect((await stat(paths.machineId)).mode & 0o777).toBe(0o600);
+      if (process.platform !== "win32") {
+        expect((await stat(paths.machineId)).mode & 0o777).toBe(0o600);
+      }
     });
   });
 

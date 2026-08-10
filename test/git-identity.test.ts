@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { resolve } from "node:path";
 import { createOpaqueId } from "../src/ids.ts";
 import {
   GIT_COMMON_DIRECTORY_ARGS,
@@ -77,13 +78,15 @@ describe("canonical remote identity", () => {
 
 describe("Git identity resolution", () => {
   test("uses fixed shell-free argument arrays and explicit cwd", async () => {
+    const workingDirectory = resolve("/workspace/linked");
+    const commonDirectory = resolve(workingDirectory, "../primary/.git");
     const adapter = new FakeProcessAdapter(
       exited("../primary/.git\n"),
       exited("git@github.com:Owner/Repository.git\n"),
     );
     const statPaths: string[] = [];
 
-    const result = await resolveGitIdentity("/workspace/linked", {
+    const result = await resolveGitIdentity(workingDirectory, {
       adapter: adapter.run,
       stat: path => {
         statPaths.push(path);
@@ -94,13 +97,13 @@ describe("Git identity resolution", () => {
     expect(result).toMatchObject({
       ok: true,
       kind: "remote",
-      commonDirectory: "/workspace/primary/.git",
+      commonDirectory,
       commonDirectoryIdentity: { kind: "device-inode", device: "7", inode: "42" },
     });
-    expect(statPaths).toEqual(["/workspace/primary/.git"]);
+    expect(statPaths).toEqual([commonDirectory]);
     expect(adapter.calls.map(call => ({ command: call.command, args: call.args, cwd: call.cwd }))).toEqual([
-      { command: "git", args: GIT_COMMON_DIRECTORY_ARGS, cwd: "/workspace/linked" },
-      { command: "git", args: GIT_ORIGIN_ARGS, cwd: "/workspace/linked" },
+      { command: "git", args: GIT_COMMON_DIRECTORY_ARGS, cwd: workingDirectory },
+      { command: "git", args: GIT_ORIGIN_ARGS, cwd: workingDirectory },
     ]);
     for (const call of adapter.calls) {
       expect(Object.hasOwn(call, "shell")).toBe(false);

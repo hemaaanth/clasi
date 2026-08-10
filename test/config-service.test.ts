@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -9,7 +9,7 @@ import {
 import { isOpaqueId } from "../src/ids.ts";
 import { acquireDocumentLock } from "../src/lock.ts";
 import { createClasiPaths } from "../src/paths.ts";
-import { pinRoot } from "../src/root-safety.ts";
+import { createPrivateRoot, pinRoot } from "../src/root-safety.ts";
 import type { RuntimeEnvironmentReady } from "../src/runtime-environment.ts";
 
 const INITIAL = {
@@ -209,8 +209,8 @@ async function withConfigFixture(run: (fixture: ConfigFixture) => Promise<void>)
   try {
     const controlRoot = join(root, "control");
     const dataRoot = join(root, "data");
-    await mkdir(controlRoot, { mode: 0o700 });
-    await mkdir(dataRoot, { mode: 0o700 });
+    await createPrivateRoot(controlRoot);
+    await createPrivateRoot(dataRoot);
     const roots = { controlRoot, dataRoot };
     const paths = createClasiPaths(roots);
     await writeFile(paths.config, `${JSON.stringify(INITIAL, null, 2)}\n`, { mode: 0o600 });

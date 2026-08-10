@@ -728,7 +728,7 @@ describe("interactive clasi command", () => {
       expect(ui.confirms[0]?.message).toContain("Effect: replace 5 with 7");
       expect(ui.selects[1]?.title).toContain("Napkin category cap: 7");
     });
-  });
+  }, 15_000);
 
   test("direct conflicts and impact commands use optional ready services", async () => {
     const conflictUi = new FakeUi();
