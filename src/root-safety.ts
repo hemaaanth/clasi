@@ -5,7 +5,7 @@ import {
   realpath,
 } from "node:fs/promises";
 import { isAbsolute, parse, relative, resolve, sep } from "node:path";
-import { probeWindowsRootOwnership } from "./windows-identity.ts";
+import { claimWindowsRootOwnership, probeWindowsRootOwnership } from "./windows-identity.ts";
 import type { WindowsOwnershipOptions } from "./windows-identity.ts";
 
 export const MAX_IMPORT_BYTES = 65_536;
@@ -56,11 +56,16 @@ export interface RootSafetyOptions {
 export async function createPrivateRoot(path: string): Promise<void> {
   if (!isAbsolute(path)) throw new RootSafetyError("path-escape");
   await assertNoSymlinkComponents(path);
+  let created: string | undefined;
   try {
-    await mkdir(path, { recursive: true, mode: 0o700 });
+    created = await mkdir(path, { recursive: true, mode: 0o700 });
   } catch (error) {
     if (isPermissionError(error)) throw new RootSafetyError("permission-denied");
     throw error;
+  }
+  if (process.platform === "win32" && created !== undefined) {
+    const ownership = await claimWindowsRootOwnership(path);
+    if (!ownership.writable) throw new RootSafetyError(ownership.code);
   }
   await assertNoSymlinkComponents(path);
   const stats = await safeLstat(path);

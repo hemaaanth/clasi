@@ -9,6 +9,16 @@ export const WINDOWS_OWNERSHIP_SCRIPT = [
   "@{ current_sid = $current; owner_sid = $owner } | ConvertTo-Json -Compress",
 ].join("; ");
 
+const WINDOWS_CLAIM_OWNERSHIP_SCRIPT = [
+  "$ErrorActionPreference = 'Stop'",
+  "$current = [System.Security.Principal.WindowsIdentity]::GetCurrent().User",
+  "$acl = [System.IO.Directory]::GetAccessControl($env:CLASI_ROOT_CHECK)",
+  "$acl.SetOwner($current)",
+  "[System.IO.Directory]::SetAccessControl($env:CLASI_ROOT_CHECK, $acl)",
+  "$owner = [System.IO.Directory]::GetAccessControl($env:CLASI_ROOT_CHECK).GetOwner([System.Security.Principal.SecurityIdentifier]).Value",
+  "@{ current_sid = $current.Value; owner_sid = $owner } | ConvertTo-Json -Compress",
+].join("; ");
+
 export type WindowsOwnershipReasonCode =
   | "powershell-unavailable"
   | "ownership-probe-invalid"
@@ -23,9 +33,24 @@ export interface WindowsOwnershipOptions {
   env?: NodeJS.ProcessEnv;
 }
 
+export async function claimWindowsRootOwnership(
+  root: string,
+  options: WindowsOwnershipOptions = {},
+): Promise<WindowsOwnershipResult> {
+  return runOwnershipScript(root, WINDOWS_CLAIM_OWNERSHIP_SCRIPT, options);
+}
+
 export async function probeWindowsRootOwnership(
   root: string,
   options: WindowsOwnershipOptions = {},
+): Promise<WindowsOwnershipResult> {
+  return runOwnershipScript(root, WINDOWS_OWNERSHIP_SCRIPT, options);
+}
+
+async function runOwnershipScript(
+  root: string,
+  script: string,
+  options: WindowsOwnershipOptions,
 ): Promise<WindowsOwnershipResult> {
   const commandOptions: JsonCommandOptions = {
     ...(options.adapter ? { adapter: options.adapter } : {}),
@@ -35,7 +60,7 @@ export async function probeWindowsRootOwnership(
   };
   const result = await runJsonCommand(
     "powershell.exe",
-    ["-NoProfile", "-NonInteractive", "-Command", WINDOWS_OWNERSHIP_SCRIPT],
+    ["-NoProfile", "-NonInteractive", "-Command", script],
     commandOptions,
   );
   if (!result.ok) {
