@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, win32 } from "node:path";
 
-const WINDOWS_POWERSHELL_COMMANDS = ["powershell.exe", "pwsh.exe"] as const;
+const WINDOWS_POWERSHELL_COMMANDS = ["pwsh.exe", "powershell.exe"] as const;
 
 export const WINDOWS_OWNERSHIP_SCRIPT = [
   "$ErrorActionPreference = 'Stop'",
@@ -130,7 +130,12 @@ function resolveDefaultPowerShellCommand(
   command: (typeof WINDOWS_POWERSHELL_COMMANDS)[number],
   env: NodeJS.ProcessEnv,
 ): string {
-  if (command !== "powershell.exe" || process.platform !== "win32") return command;
+  if (process.platform !== "win32") return command;
+  if (command === "pwsh.exe") {
+    const programFiles = env.ProgramFiles;
+    if (programFiles === undefined || !win32.isAbsolute(programFiles)) return command;
+    return win32.join(programFiles, "PowerShell", "7", command);
+  }
   const systemRoot = env.SystemRoot ?? env.windir;
   if (systemRoot === undefined || !win32.isAbsolute(systemRoot)) return command;
   return win32.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", command);
