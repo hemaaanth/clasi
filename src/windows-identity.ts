@@ -173,6 +173,7 @@ async function runDefaultOwnershipCommand(
     "catch { $name = $_.Exception.GetType().Name; if ($name -eq 'UnauthorizedAccessException') { $kind = 'access' } elseif ($name -eq 'MethodException' -or $name -eq 'MethodInvocationException') { $kind = 'method' } elseif ($name -eq 'PlatformNotSupportedException') { $kind = 'platform' } elseif ($name -eq 'RuntimeException') { $kind = 'runtime' } else { $kind = 'other' }; [System.IO.File]::WriteAllText($env:CLASI_OWNERSHIP_COMPLETE, \"error:$kind\", $encoding) }",
   ].join("\n");
   let child: ReturnType<typeof spawn> | undefined;
+  let completedBySentinel = false;
   try {
     await writeFile(scriptPath, wrappedScript, { encoding: "utf8", mode: 0o600 });
     child = spawn(
@@ -196,6 +197,7 @@ async function runDefaultOwnershipCommand(
       if (completion?.startsWith("ok:") || completion?.startsWith("error:")) break;
       await Bun.sleep(25);
     }
+    completedBySentinel = completion?.startsWith("ok:") === true || completion?.startsWith("error:") === true;
     if (completion === undefined || (!completion.startsWith("ok:") && !completion.startsWith("error:"))) {
       if (env.CLASI_DEBUG_CHECK === "1") {
         console.error(`clasi ownership probe stalled: ${completion ?? "not-started"}`);
@@ -243,9 +245,11 @@ async function runDefaultOwnershipCommand(
     };
   } finally {
     if (child !== undefined) {
-      if (child.exitCode === null) child.kill();
-      const killDeadline = Date.now() + 1_000;
-      while (child.exitCode === null && Date.now() < killDeadline) await Bun.sleep(25);
+      if (!completedBySentinel && child.exitCode === null) child.kill();
+      if (!completedBySentinel) {
+        const killDeadline = Date.now() + 1_000;
+        while (child.exitCode === null && Date.now() < killDeadline) await Bun.sleep(25);
+      }
       child.unref();
     }
     await rm(captureRoot, { recursive: true, force: true }).catch(() => undefined);
