@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { isAbsolute, join, win32 } from "node:path";
 
 const WINDOWS_POWERSHELL_COMMANDS = ["powershell.exe", "pwsh.exe"] as const;
+const OWNERSHIP_TIMEOUT_MS = 60_000;
 
 export const WINDOWS_OWNERSHIP_SCRIPT = [
   "$ErrorActionPreference = 'Stop'",
@@ -81,7 +82,7 @@ async function runOwnershipScript(
     ...(options.adapter === undefined ? {} : { adapter: options.adapter }),
     env,
     maxOutputBytes: 4_096,
-    timeoutMs: 30_000,
+    timeoutMs: OWNERSHIP_TIMEOUT_MS,
   };
   for (const command of WINDOWS_POWERSHELL_COMMANDS) {
     const args = ["-NoProfile", "-NonInteractive", "-Command", script];
@@ -180,7 +181,7 @@ async function runDefaultOwnershipCommand(
         windowsHide: true,
       },
     );
-    const deadline = Date.now() + 30_000;
+    const deadline = Date.now() + OWNERSHIP_TIMEOUT_MS;
     let completion: string | undefined;
     while (Date.now() < deadline) {
       completion = await readFile(completionPath, "utf8").catch(() => undefined);
