@@ -21,6 +21,7 @@ import {
 import type { RootPin } from "./root-safety.ts";
 import { MAX_DOCUMENT_BYTES } from "./schema.ts";
 import type { ClasiDocument, TransactionRecord } from "./schema.ts";
+import type { WindowsFileIdentity } from "./windows-file-identity.ts";
 
 const DEFAULT_TRANSACTION_LIMIT = 100;
 const MAX_TRANSACTION_LIMIT = 100;
@@ -45,7 +46,6 @@ export type CoordinationReasonCode =
   | "lock-recovery-unavailable"
   | "quarantine-unsafe"
   | "quarantine-changed"
-  | "file-identity-unavailable"
   | "cleanup-incomplete";
 
 const MAX_INSPECTED_LOCKS = 1_000;
@@ -342,17 +342,15 @@ export class CoordinationService {
       }
     }
 
-    const noFollow = constants.O_NOFOLLOW;
-    if (typeof noFollow !== "number") return rejected("file-identity-unavailable");
-
-    let stateHandle: FileHandle;
+    let stateFile: OpenIdentityFile;
     try {
-      stateHandle = await open(statePath, constants.O_RDONLY | noFollow);
+      stateFile = await openIdentityFile(statePath);
     } catch {
       return rejected("invalid-transaction-state");
     }
 
-    let quarantineHandle: FileHandle | undefined;
+    const stateHandle = stateFile.handle;
+    let quarantineFile: OpenIdentityFile | undefined;
     let quarantineRemoved = false;
     try {
       const openedState = await stateHandle.stat();
@@ -361,11 +359,12 @@ export class CoordinationService {
       }
 
       try {
-        quarantineHandle = await open(quarantinePath, constants.O_RDONLY | noFollow);
+        quarantineFile = await openIdentityFile(quarantinePath);
       } catch (error) {
         if (!hasErrorCode(error, "ENOENT")) return rejected("quarantine-unsafe");
       }
 
+      const quarantineHandle = quarantineFile?.handle;
       let openedQuarantine: Stats | undefined;
       if (quarantineHandle !== undefined) {
         openedQuarantine = await quarantineHandle.stat();
@@ -385,31 +384,34 @@ export class CoordinationService {
         return rejected("transaction-changed");
       }
 
-      let linkedState: Stats;
+      let linkedState: IdentityPathState;
       try {
-        linkedState = await lstat(statePath);
+        linkedState = await inspectIdentityPath(statePath, stateFile.identity);
       } catch {
         return rejected("transaction-changed");
       }
       if (
-        !linkedState.isFile() ||
-        linkedState.size > MAX_DOCUMENT_BYTES ||
-        !sameFileIdentity(openedState, linkedState)
+        !linkedState.matches ||
+        !linkedState.stats.isFile() ||
+        linkedState.stats.size > MAX_DOCUMENT_BYTES
       ) {
         return rejected("transaction-changed");
       }
 
-      if (quarantineHandle !== undefined && openedQuarantine !== undefined) {
-        let linkedQuarantine: Stats;
+      if (quarantineFile !== undefined && openedQuarantine !== undefined) {
+        let linkedQuarantine: IdentityPathState;
         try {
-          linkedQuarantine = await lstat(quarantinePath);
+          linkedQuarantine = await inspectIdentityPath(
+            quarantinePath,
+            quarantineFile.identity,
+          );
         } catch {
           return rejected("quarantine-changed");
         }
         if (
-          !linkedQuarantine.isFile() ||
-          linkedQuarantine.size > MAX_DOCUMENT_BYTES ||
-          !sameFileIdentity(openedQuarantine, linkedQuarantine)
+          !linkedQuarantine.matches ||
+          !linkedQuarantine.stats.isFile() ||
+          linkedQuarantine.stats.size > MAX_DOCUMENT_BYTES
         ) {
           return rejected("quarantine-changed");
         }
@@ -431,7 +433,7 @@ export class CoordinationService {
       return rejected("quarantine-unsafe");
     } finally {
       try {
-        await quarantineHandle?.close();
+        await quarantineFile?.handle.close();
       } catch {
         // Cleanup outcome is based on verified path operations, never close diagnostics.
       }
@@ -472,25 +474,24 @@ export class CoordinationService {
       return false;
     }
 
-    const noFollow = constants.O_NOFOLLOW;
-    if (typeof noFollow !== "number") return false;
-    let handle;
+    let file: OpenIdentityFile;
     try {
-      handle = await open(ownerPath, constants.O_RDONLY | noFollow);
+      file = await openIdentityFile(ownerPath);
     } catch {
       return false;
     }
+    const handle = file.handle;
 
     try {
       const opened = await handle.stat();
       if (!opened.isFile() || opened.size > MAX_LOCK_OWNER_BYTES) return false;
       const content = await handle.readFile({ encoding: "utf8" });
       if (Buffer.byteLength(content, "utf8") > MAX_LOCK_OWNER_BYTES) return false;
-      const linked = await lstat(ownerPath);
+      const linked = await inspectIdentityPath(ownerPath, file.identity);
       if (
-        !linked.isFile() ||
-        linked.size > MAX_LOCK_OWNER_BYTES ||
-        !sameFileIdentity(opened, linked)
+        !linked.matches ||
+        !linked.stats.isFile() ||
+        linked.stats.size > MAX_LOCK_OWNER_BYTES
       ) {
         return false;
       }
@@ -558,13 +559,82 @@ function cleanupWarning(): CoordinationWarning {
   };
 }
 
-function sameFileIdentity(opened: Stats, linked: Stats): boolean {
-  return usableIdentity(opened.dev) &&
-    usableIdentity(opened.ino) &&
-    usableIdentity(linked.dev) &&
-    usableIdentity(linked.ino) &&
-    opened.dev === linked.dev &&
-    opened.ino === linked.ino;
+type StableFileIdentity =
+  | { readonly kind: "stat"; readonly device: number; readonly inode: number }
+  | ({ readonly kind: "windows" } & WindowsFileIdentity);
+
+interface OpenIdentityFile {
+  readonly handle: FileHandle;
+  readonly identity: StableFileIdentity;
+}
+
+interface IdentityPathState {
+  readonly stats: Stats;
+  readonly matches: boolean;
+}
+
+async function openIdentityFile(path: string): Promise<OpenIdentityFile> {
+  if (process.platform === "win32") {
+    const beforeStats = await lstat(path);
+    if (!beforeStats.isFile()) throw new Error("not-regular");
+    const windows = await import("./windows-file-identity.ts");
+    const before = windows.readWindowsPathIdentity(path);
+    const handle = await open(path, constants.O_RDONLY);
+    try {
+      const opened = await handle.stat();
+      if (!opened.isFile()) throw new Error("not-regular");
+      const fromHandle = windows.readWindowsFileDescriptorIdentity(handle.fd);
+      const linked = windows.readWindowsPathIdentity(path);
+      if (
+        !windows.sameWindowsFileIdentity(before, fromHandle) ||
+        !windows.sameWindowsFileIdentity(fromHandle, linked)
+      ) {
+        throw new Error("file-changed");
+      }
+      return { handle, identity: { kind: "windows", ...fromHandle } };
+    } catch (error) {
+      await handle.close().catch(() => {});
+      throw error;
+    }
+  }
+
+  const noFollow = constants.O_NOFOLLOW;
+  if (typeof noFollow !== "number") throw new Error("no-follow-unavailable");
+  const handle = await open(path, constants.O_RDONLY | noFollow);
+  try {
+    const opened = await handle.stat();
+    const identity = statIdentity(opened);
+    if (!opened.isFile() || identity === null) throw new Error("file-identity-unavailable");
+    return { handle, identity };
+  } catch (error) {
+    await handle.close().catch(() => {});
+    throw error;
+  }
+}
+
+async function inspectIdentityPath(
+  path: string,
+  expected: StableFileIdentity,
+): Promise<IdentityPathState> {
+  const stats = await lstat(path);
+  if (!stats.isFile()) return { stats, matches: false };
+  if (expected.kind === "stat") {
+    const linked = statIdentity(stats);
+    return {
+      stats,
+      matches: linked !== null &&
+        linked.device === expected.device &&
+        linked.inode === expected.inode,
+    };
+  }
+  const windows = await import("./windows-file-identity.ts");
+  const linked = windows.readWindowsPathIdentity(path);
+  return { stats, matches: windows.sameWindowsFileIdentity(expected, linked) };
+}
+
+function statIdentity(stats: Stats): Extract<StableFileIdentity, { kind: "stat" }> | null {
+  if (!usableIdentity(stats.dev) || !usableIdentity(stats.ino)) return null;
+  return { kind: "stat", device: stats.dev, inode: stats.ino };
 }
 
 function sameTransaction(left: LoadedTransaction, right: LoadedTransaction): boolean {
