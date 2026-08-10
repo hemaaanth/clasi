@@ -145,7 +145,7 @@ async function runDefaultOwnershipCommand(
     "$encoding = New-Object System.Text.UTF8Encoding($false)",
     `try { $result = & { ${script} }; $text = [string]$result; $key = [Convert]::FromBase64String($env:CLASI_OWNERSHIP_KEY); $hmac = New-Object System.Security.Cryptography.HMACSHA256; try { $hmac.Key = $key; $signature = [Convert]::ToBase64String($hmac.ComputeHash($encoding.GetBytes($text))) } finally { $hmac.Dispose() }; [System.IO.File]::WriteAllText($env:CLASI_OWNERSHIP_RESULT, $text, $encoding); [System.IO.File]::WriteAllText($env:CLASI_OWNERSHIP_COMPLETE, "ok:$signature", $encoding) }`,
     "catch { $name = $_.Exception.GetType().Name; if ($name -eq 'UnauthorizedAccessException') { $kind = 'access' } elseif ($name -eq 'MethodException' -or $name -eq 'MethodInvocationException') { $kind = 'method' } elseif ($name -eq 'PlatformNotSupportedException') { $kind = 'platform' } elseif ($name -eq 'RuntimeException') { $kind = 'runtime' } else { $kind = 'other' }; [System.IO.File]::WriteAllText($env:CLASI_OWNERSHIP_COMPLETE, \"error:$kind\", $encoding) }",
-  ].join("; ");
+  ].join("\n");
   let child: Bun.Subprocess | undefined;
   try {
     const encodedScript = Buffer.from(wrappedScript, "utf16le").toString("base64");
