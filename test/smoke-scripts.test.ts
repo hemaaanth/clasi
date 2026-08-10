@@ -11,7 +11,7 @@ import {
   createIsolatedRoots,
   runCheckedProcess,
   spawnProcess,
-  spawnProcessDiscardOutput,
+  spawnProcessFileBacked,
 } from "../scripts/isolation.ts";
 import type { IsolatedRoots, ProcessAdapter } from "../scripts/isolation.ts";
 import {
@@ -119,14 +119,23 @@ describe("public smoke scripts", () => {
     })).rejects.toEqual(new IsolationError("process-spawn-failed"));
   });
 
-  test("runs terminal launchers without pipe-backed output", async () => {
-    expect(await spawnProcessDiscardOutput({
+  test("captures terminal launcher output without pipe-backed stdio", async () => {
+    expect(await spawnProcessFileBacked({
       command: process.execPath,
-      args: ["-e", "process.stdout.write('discarded')"],
+      args: ["-e", "process.stdout.write('captured')"],
       cwd: resolve("."),
+      env: { TMP: tmpdir() },
       timeoutMs: 5_000,
       maxOutputBytes: 16,
-    })).toEqual({ exitCode: 0, stdout: "", stderr: "" });
+    })).toEqual({ exitCode: 0, stdout: "captured", stderr: "" });
+    await expect(spawnProcessFileBacked({
+      command: process.execPath,
+      args: ["-e", "process.stdout.write('x'.repeat(17))"],
+      cwd: resolve("."),
+      env: { TMP: tmpdir() },
+      timeoutMs: 5_000,
+      maxOutputBytes: 16,
+    })).rejects.toEqual(new IsolationError("process-output-limit"));
   });
 
   test("accepts exact clasi diagnostics without retaining raw text", () => {
