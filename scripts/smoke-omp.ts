@@ -258,13 +258,7 @@ export async function runOmpSmoke(
     gitTransport.stop();
     gitTransport = undefined;
     stage = "global-bin";
-    const bunBinOutput = await checked(adapter, {
-      command: bunExecutable,
-      args: ["pm", "bin", "--global"],
-      cwd: packageRoot,
-      env: environment,
-    });
-    const globalBin = parseAbsoluteSingleLine(bunBinOutput.stdout);
+    const globalBin = join(roots.bunInstall, "bin");
     const runtimeDirectories = [dirname(bunExecutable), globalBin];
     if (process.platform === "win32") {
       try {
@@ -970,13 +964,6 @@ function parseBunVersion(stdout: string): string {
   return value;
 }
 
-function parseAbsoluteSingleLine(stdout: string): string {
-  const lines = stdout.trim().split(/\r?\n/);
-  if (lines.length !== 1 || !lines[0] || !isAbsolute(lines[0])) {
-    throw new IsolationError("global-bin-invalid");
-  }
-  return resolve(lines[0]);
-}
 
 async function assertMissing(path: string): Promise<void> {
   try {
