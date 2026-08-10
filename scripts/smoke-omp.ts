@@ -267,15 +267,10 @@ export async function runOmpSmoke(
       } catch (error) {
         if (!(error instanceof IsolationError) || error.code !== "executable-not-found") throw error;
       }
-      const powershell = join(
-        process.env.SystemRoot ?? "C:\\Windows",
-        "System32",
-        "WindowsPowerShell",
-        "v1.0",
-        "powershell.exe",
-      );
+      const system32 = join(process.env.SystemRoot ?? "C:\\Windows", "System32");
+      const powershell = join(system32, "WindowsPowerShell", "v1.0", "powershell.exe");
       await access(powershell);
-      runtimeDirectories.push(dirname(powershell));
+      runtimeDirectories.push(system32, dirname(powershell));
     }
     assertPathInsideRoot(roots.root, globalBin);
     const cleanEnvironment = {
