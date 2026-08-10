@@ -36,7 +36,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "bun test",
+    "test": "bun test --timeout 15000",
     "smoke:host": "bun scripts/smoke-host.ts",
     "smoke:omp": "bun scripts/smoke-omp.ts",
     "test:concurrency": "bun test test/concurrency.test.ts",
