@@ -11,7 +11,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, normalize } from "node:path";
-import { resolveClasiRoots } from "../src/config.ts";
+import { resolveClasiAgentRoot, resolveClasiRoots } from "../src/config.ts";
 import { createClasiPaths, resolveWithin } from "../src/paths.ts";
 import {
   RootSafetyError,
@@ -60,6 +60,11 @@ describe("two-root path layout", () => {
       },
       config: { dataRoot: "${HOME}/Synced/clasi" },
     });
+    expect(resolveClasiAgentRoot({
+      HOME: home,
+      PI_CODING_AGENT_DIR: agentDirectory,
+      OMP_PROFILE: "ignored-profile",
+    })).toBe(agentDirectory);
     const paths = createClasiPaths(roots);
 
     expect(roots).toEqual({
@@ -73,6 +78,28 @@ describe("two-root path layout", () => {
     expect(paths.lock(opaque("doc", 1))).toBe(
       join(agentDirectory, "clasi", "locks", opaque("doc", 1)),
     );
+  });
+
+  test("defaults to OMP's configured agent directory when no explicit override exists", () => {
+    const home = join(tmpdir(), "home", "tester");
+    expect(resolveClasiRoots({
+      env: {
+        HOME: home,
+        PI_CONFIG_DIR: ".custom-omp",
+        CLASI_HOME: join(home, "clasi-data"),
+      },
+    }).controlRoot).toBe(join(home, ".custom-omp", "agent", "clasi"));
+  });
+
+  test("uses the active OMP profile when resolving the default agent directory", () => {
+    const home = join(tmpdir(), "home", "tester");
+    expect(resolveClasiRoots({
+      env: {
+        HOME: home,
+        OMP_PROFILE: "work",
+        CLASI_HOME: join(home, "clasi-data"),
+      },
+    }).controlRoot).toBe(join(home, ".omp", "profiles", "work", "agent", "clasi"));
   });
 
   test("CLASI_HOME wins and no data root falls back to a worktree", () => {

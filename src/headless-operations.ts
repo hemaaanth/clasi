@@ -148,9 +148,8 @@ export async function executeHeadlessRequest(
 
 async function executeSetup(request: Extract<HeadlessRequest, { command: "setup" }>): Promise<HeadlessResponse> {
   const home = process.env.HOME ?? process.env.USERPROFILE;
-  const agentRoot = process.env.PI_CODING_AGENT_DIR;
-  if (!home || !agentRoot) return headlessError("invalid-environment", "Required local environment is unavailable.", {}, []);
-  const roots = resolveClasiRoots({ env: { ...process.env, HOME: home, PI_CODING_AGENT_DIR: agentRoot, CLASI_HOME: request.root } });
+  if (!home) return headlessError("invalid-environment", "Required local environment is unavailable.", {}, []);
+  const roots = resolveClasiRoots({ env: { ...process.env, CLASI_HOME: request.root } });
   const result = await commitSetup(await prepareSetup({ roots, home, machineFacts: await detectCurrentMachineFacts() }), { confirm: request.confirm });
   if (result.status !== "committed") return headlessChoiceRequired("confirmation-required", "Setup requires confirmation.", {}, []);
   return headlessOk("setup-complete", "clasi setup completed.", {

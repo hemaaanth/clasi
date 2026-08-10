@@ -109,7 +109,7 @@ export async function resolveRuntimeEnvironment(
 ): Promise<RuntimeEnvironmentResult> {
   const env = options.env ?? process.env;
   const home = env.HOME ?? env.USERPROFILE;
-  if (!nonempty(home) || !nonempty(env.PI_CODING_AGENT_DIR) || !nonempty(cwd)) {
+  if (!nonempty(home) || !nonempty(cwd)) {
     return { status: "degraded", code: "invalid-environment" };
   }
 
