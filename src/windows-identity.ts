@@ -162,9 +162,10 @@ async function runDefaultOwnershipCommand(
     `try { $result = & { ${script} }; $text = [string]$result; $key = [Convert]::FromBase64String($env:CLASI_OWNERSHIP_KEY); $hmac = New-Object System.Security.Cryptography.HMACSHA256; try { $hmac.Key = $key; $signature = [Convert]::ToBase64String($hmac.ComputeHash($encoding.GetBytes($text))) } finally { $hmac.Dispose() }; [System.IO.File]::WriteAllText($env:CLASI_OWNERSHIP_RESULT, $text, $encoding); [System.IO.File]::WriteAllText($env:CLASI_OWNERSHIP_COMPLETE, "ok:$signature", $encoding) }`,
     "catch { $name = $_.Exception.GetType().Name; if ($name -eq 'UnauthorizedAccessException') { $kind = 'access' } elseif ($name -eq 'MethodException' -or $name -eq 'MethodInvocationException') { $kind = 'method' } elseif ($name -eq 'PlatformNotSupportedException') { $kind = 'platform' } elseif ($name -eq 'RuntimeException') { $kind = 'runtime' } else { $kind = 'other' }; [System.IO.File]::WriteAllText($env:CLASI_OWNERSHIP_COMPLETE, \"error:$kind\", $encoding) }",
   ].join("\n");
+  let child: Bun.Subprocess | undefined;
   try {
     await writeFile(scriptPath, wrappedScript, { encoding: "utf8", mode: 0o600 });
-    const invocation = Bun.spawnSync(
+    child = Bun.spawn(
       [command, "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath],
       {
         env: {
@@ -176,14 +177,20 @@ async function runDefaultOwnershipCommand(
         stdin: "ignore",
         stdout: "ignore",
         stderr: "ignore",
-        timeout: 30_000,
         windowsHide: true,
       },
     );
-    if (invocation.exitedDueToTimeout) {
+    const deadline = Date.now() + 30_000;
+    let completion: string | undefined;
+    while (Date.now() < deadline) {
+      completion = await readFile(completionPath, "utf8").catch(() => undefined);
+      if (completion !== undefined) break;
+      await Bun.sleep(25);
+    }
+    if (completion === undefined) {
       return { ok: false, code: "timeout", message: "Ownership probe timed out" };
     }
-    const completion = await readFile(completionPath, "utf8").catch(() => undefined);
+    
     if (completion?.startsWith("error:")) {
       return {
         ok: false,
@@ -219,6 +226,12 @@ async function runDefaultOwnershipCommand(
       message: "Ownership probe failed",
     };
   } finally {
+    if (child !== undefined) {
+      if (child.exitCode === null) child.kill();
+      const killDeadline = Date.now() + 1_000;
+      while (child.exitCode === null && Date.now() < killDeadline) await Bun.sleep(25);
+      child.unref();
+    }
     await rm(captureRoot, { recursive: true, force: true }).catch(() => undefined);
   }
 }
