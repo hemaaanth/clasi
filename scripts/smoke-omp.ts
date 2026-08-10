@@ -29,7 +29,7 @@ import type { IsolatedRoots, ProcessAdapter, ProcessRequest } from "./isolation.
 
 const SOURCE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const MAX_JSON_BYTES = 1_048_576;
-const PROCESS_TIMEOUT_MS = 90_000;
+const PROCESS_TIMEOUT_MS = 45_000;
 const INSTALL_TIMEOUT_MS = 120_000;
 const SMOKE_PROVIDER = "clasi-smoke";
 const SMOKE_MODEL = "smoke-model";
@@ -84,7 +84,10 @@ export async function runOmpSmoke(
   const adapter = dependencies.process ?? spawnProcess;
   const sourceRoot = resolve(dependencies.sourceRoot ?? SOURCE_ROOT);
   const now = dependencies.now ?? (() => new Date());
-  const roots = await createIsolatedRoots();
+  const localAppData = process.platform === "win32" ? process.env.LOCALAPPDATA : undefined;
+  const roots = await createIsolatedRoots(
+    localAppData === undefined ? {} : { parent: join(localAppData, "Temp") },
+  );
   const environment = await createSmokeEnvironment(roots);
   const publicGitSpec = process.env.CLASI_PUBLIC_GIT_SPEC;
   if (
