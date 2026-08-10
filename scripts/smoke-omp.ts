@@ -3,7 +3,7 @@ import { access, cp, link, lstat, mkdir, readFile, readdir, realpath, rename, un
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { acquireDocumentLock, LockError } from "../src/lock.ts";
-import { assertRootUnchanged, pinRoot } from "../src/root-safety.ts";
+import { RootSafetyError, assertRootUnchanged, pinRoot } from "../src/root-safety.ts";
 import {
   CLASI_VERSION,
   EVIDENCE_SCHEMA_VERSION,
@@ -332,7 +332,9 @@ export async function runOmpSmoke(
   } catch (error) {
     const failedStage = error instanceof IsolationError && /^setup-[a-z][a-z0-9-]{0,63}$/.test(error.code)
       ? error.code
-      : stage;
+      : error instanceof RootSafetyError
+        ? `${stage}-${error.code}`
+        : stage;
     throw new IsolationError(`smoke-${failedStage}-failed`);
   } finally {
     if (stub !== undefined) {
@@ -899,9 +901,9 @@ function runPathNormalizationCheck(roots: IsolatedRoots): void {
 async function runWindowsBoundaryCheck(
   roots: IsolatedRoots,
 ): Promise<"passed" | "not_applicable"> {
-  if (process.platform !== "win32") return "not_applicable";
-  const pin = await pinRoot(roots.root);
+  const pin = await pinRoot(roots.clasiHome);
   await assertRootUnchanged(pin);
+  if (process.platform !== "win32") return "not_applicable";
   return "passed";
 }
 
